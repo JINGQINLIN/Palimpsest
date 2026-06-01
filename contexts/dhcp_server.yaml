@@ -1,0 +1,12 @@
+domain: "udhcpd — DHCP server in embedded Linux router firmware."
+
+protocol: |
+  DHCP (RFC 2131/2132). Option 53 message type: 1=DISCOVER 2=OFFER 3=REQUEST
+  4=DECLINE 5=ACK 6=NAK 7=RELEASE 8=INFORM.
+  Common options: 12=HostName 50=RequestedIP 51=LeaseTime 53=MsgType 54=ServerID.
+  Server UDP port 67, client 68. Multi-byte fields are network byte order (big-endian).
+
+platform: |
+  socket(AF_INET=2, SOCK_DGRAM=2, 0) = UDP socket. ioctl 0x8915 = SIOCGIFINDEX.
+  signal 10=SIGUSR1, 15=SIGTERM. system() runs a shell command — command-injection
+  risk if the string is externally controlled.

@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+_IDENT_RE = re.compile(r"[A-Za-z_]\w*")
+
+
+def normalize_fields(raw: Any) -> list[dict]:
+    if not isinstance(raw, list):
+        return []
+    by_offset: dict[int, dict] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            offset = int(item.get("offset"))
+        except (TypeError, ValueError):
+            continue
+        name = str(item.get("name") or "").strip()
+        type_ = str(item.get("type") or "").strip()
+        if offset < 0 or not _IDENT_RE.fullmatch(name) or not type_:
+            continue
+        try:
+            size = int(item.get("size"))
+        except (TypeError, ValueError):
+            size = 0
+        by_offset[offset] = {"offset": offset, "name": name, "type": type_, "size": max(size, 0)}
+    return [by_offset[off] for off in sorted(by_offset)]
+
+
+class StructRegistry:
+    _DDL = """
+    CREATE TABLE IF NOT EXISTS structs (
+        name        TEXT PRIMARY KEY,
+        fields      TEXT NOT NULL,
+        size        INTEGER NOT NULL DEFAULT 0,
+        confidence  TEXT NOT NULL CHECK(confidence IN ('low','medium','high')),
+        evidence    TEXT NOT NULL DEFAULT '',
+        source_file TEXT NOT NULL DEFAULT '',
+        updated_at  TEXT NOT NULL
+    )
+    """
+
+    def __init__(self, db_path: str | Path) -> None:
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self.db_path))
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute(self._DDL)
+        self._conn.commit()
+
+    def update(
+        self,
+        *,
+        name: str,
+        fields: list[dict],
+        size: int = 0,
+        confidence: str = "medium",
+        evidence: str = "",
+        source_file: str = "",
+    ) -> None:
+        clean = normalize_fields(fields)
+        if not _IDENT_RE.fullmatch(name or "") or not clean:
+            return
+        if confidence not in ("low", "medium", "high"):
+            confidence = "medium"
+        self._conn.execute(
+            """INSERT OR REPLACE INTO structs
+               (name, fields, size, confidence, evidence, source_file, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                name,
+                json.dumps(clean, ensure_ascii=False),
+                int(size or 0),
+                confidence,
+                evidence,
+                source_file,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self._conn.commit()
+
+    def lookup(self, name: str) -> Optional[dict]:
+        row = self._conn.execute("SELECT * FROM structs WHERE name = ?", (name,)).fetchone()
+        return self._row_to_dict(row) if row else None
+
+    def get_all(self) -> dict[str, dict]:
+        rows = self._conn.execute("SELECT * FROM structs ORDER BY name").fetchall()
+        return {row["name"]: self._row_to_dict(row) for row in rows}
+
+    def delete(self, name: str) -> None:
+        self._conn.execute("DELETE FROM structs WHERE name = ?", (name,))
+        self._conn.commit()
+
+    @staticmethod
+    def _row_to_dict(row: sqlite3.Row) -> dict:
+        data = dict(row)
+        data["fields"] = json.loads(data["fields"])
+        return data
+
+    def close(self) -> None:
+        self._conn.close()

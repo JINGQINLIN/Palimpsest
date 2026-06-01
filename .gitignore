@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+
+# 虚拟环境
+.venv/
+.venv-*/
+
+# 项目机密配置 (含 API key)。提交 local_config.example.yaml 作模板。
+local_config.yaml
+
+# 运行产物
+output/
+
+# Ghidra / pyghidra-mcp 工作目录
+pyghidra_mcp_projects/
+*.gpr
+*.rep/
+
+# SQLite
+*.db
+*.db-journal
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 临时备份
+legacy_*.json
+
+# dev/ 临时脚本副产物
+dev/__pycache__/
+dev/*.pyc

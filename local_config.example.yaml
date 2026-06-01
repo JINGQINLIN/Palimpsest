@@ -1,0 +1,16 @@
+# Copy this file to local_config.yaml and fill in real values.
+# local_config.yaml is ignored by git.
+
+# Anthropic-compatible endpoint used by the LLM reconstruction passes.
+ANTHROPIC_API_KEY: "PUT-YOUR-API-KEY-HERE"
+ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic"
+RECONSTRUCTION_MODEL: "glm-5.1"
+
+# General pipeline settings.
+LLM_TIMEOUT_SECONDS: 600
+CONTEXT: "dhcp_server"  # contexts/<name>.yaml
+CODEQL_EXE: "D:\\tools\\codeql\\codeql.exe"
+
+# Used to fetch the raw package from Ghidra (main.py re-fetches on every run).
+GHIDRA_INSTALL_DIR: "D:\\path\\to\\ghidra_12.x_PUBLIC"
+# PYGHIDRA_MCP_EXE: "D:\\miniconda3\\envs\\semant\\Scripts\\pyghidra-mcp.exe"
