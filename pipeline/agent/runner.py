@@ -16,7 +16,7 @@ from pipeline.registry import NamingRegistry, StructRegistry, write_types_header
 _PLAYBOOK = (Path(__file__).parent / "playbook.md").read_text(encoding="utf-8")
 _CODEQL_GUIDE = (Path(__file__).parent / "codeql_guide.md").read_text(encoding="utf-8")
 _MAX_TOKENS = 8192
-_MAX_ITERATIONS = 200
+_MAX_ITERATIONS = 1000
 _REVIEW_LOG = "agent_review.json"
 _KICKOFF = (
     "Start the consistency review. The goal is a clean, high-quality CodeQL database. "

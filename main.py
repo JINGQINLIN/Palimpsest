@@ -37,6 +37,7 @@ from pipeline.stages.ghidra import (
     load_ghidra_config,
     load_raw_package,
 )
+from pipeline.stages.order import topo_plan
 from pipeline.stages.reconstruct import prefetch, process_function
 
 console = Console()
@@ -141,10 +142,13 @@ def run_reconstruction(
     llm: LLMClient,
     domain_context: str,
 ) -> tuple[TokenUsage, list[tuple[str, str]]]:
+    plan = topo_plan(contexts)
+
     print_step(console, "2. Semantic reconstruction")
     print_item(console, "functions", len(contexts))
     print_item(console, "model", llm.model)
     print_item(console, "output", package_dir)
+    print_item(console, "topo depth", plan.summary())
     console.print()
 
     total_usage = TokenUsage()
@@ -152,8 +156,12 @@ def run_reconstruction(
 
     with make_progress(console) as progress:
         task = progress.add_task("reconstructing", total=len(contexts))
-        for addr_hex, ctx in sorted(contexts.items()):
-            progress.update(task, description=f"0x{addr_hex}  {ctx.ghidra_name}")
+        for addr_hex, position in plan.walk():
+            ctx = contexts[addr_hex]
+            progress.update(
+                task,
+                description=f"{position}  0x{addr_hex}  {ctx.ghidra_name}",
+            )
             try:
                 usage = reconstruct_function(
                     binary_name=binary_name,

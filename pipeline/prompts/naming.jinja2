@@ -27,15 +27,31 @@ Rules:
   propose a name whenever the call/usage context gives medium or high confidence
   (kind=function for FUN_/sub_, kind=global_var for DAT_/byte_/word_/dword_/qword_).
 
-Output ONLY these three blocks, nothing else:
+Output format — exactly three top-level blocks, in this order. Anything outside
+these blocks (including markdown code fences) will be discarded.
+
+  1. <named> ... </named>             the renamed C code; placeholders unchanged
+  2. <naming_map> ... </naming_map>   human-readable rename log, one entry per line
+  3. <registry_updates> ... </registry_updates>   JSON array
+
+Tag pairing rules — most format errors come from violating these:
+- </named> closes <named>. Never close <named> with </naming_map> or any other tag.
+- </naming_map> closes <naming_map>. Never close it with </named>.
+- Each opening tag appears exactly once. Never reopen a block after closing it.
+- Do not nest blocks. Do not wrap any block in ```...``` fences.
+
+Example skeleton — replace the contents, keep the tag layout:
 <named>
-C code with locals/params renamed; placeholders unchanged
+uint32_t parse_packet(char *buf, int len) {
+  ...
+}
 </named>
 <naming_map>
-old_name -> new_name | confidence: high/medium | evidence: one line
+param_1 -> buf | confidence: high | evidence: passed to recv()
+iVar1   -> count | confidence: medium | evidence: byte count argument
 </naming_map>
 <registry_updates>
-[{"symbol": "FUN_0", "canonical_name": "name", "kind": "function", "inferred_type": "", "confidence": "medium", "evidence": "..."}]
+[{"symbol": "FUN_00012345", "canonical_name": "parse_packet", "kind": "function", "inferred_type": "uint32_t(char*, int)", "confidence": "high", "evidence": "..."}]
 </registry_updates>
 
 Structured C:

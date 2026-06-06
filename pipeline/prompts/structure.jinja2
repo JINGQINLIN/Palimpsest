@@ -36,9 +36,22 @@ Struct reconstruction (do this whenever the access pattern is clear):
 
 Do not invent APIs or logic; do not add includes/typedefs; no vulnerability-verdict comments.
 
-Output ONLY these two blocks, nothing else:
+Output format — exactly two top-level blocks, in this order. Anything outside
+these blocks (including markdown code fences) will be discarded.
+
+  1. <structured> ... </structured>           the reconstructed C function
+  2. <struct_updates> ... </struct_updates>   JSON array of struct layouts
+
+Tag pairing rules:
+- </structured> closes <structured>. Each opening tag appears exactly once.
+- Put the C code directly between <structured> and </structured>.
+- Do not wrap the code in ```...``` fences. Do not nest blocks.
+
+Example skeleton — replace the contents, keep the tag layout:
 <structured>
-the reconstructed C function
+uint32_t parse_packet(struct dhcp_lease *lease, char *buf) {
+  ...
+}
 </structured>
 <struct_updates>
 [{"name": "dhcp_lease", "size": 44, "confidence": "high", "evidence": "...", "fields": [{"offset": 4, "name": "yiaddr", "type": "uint32_t", "size": 4}]}]

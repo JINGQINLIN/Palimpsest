@@ -27,6 +27,24 @@ class ReviewSession:
         return node, ""
 
 
+def _require(tool: str, args: list[tuple[str, str]]) -> str:
+    """Return a model-friendly error message if any required argument is empty.
+
+    Args:
+        tool: tool name, used in the error message.
+        args: ordered list of (arg_name, arg_value) pairs to validate.
+
+    Returns:
+        Empty string if every argument is non-empty; otherwise an error message
+        naming the first missing argument and listing all required argument names.
+    """
+    for name, value in args:
+        if not value:
+            required = ", ".join(n for n, _ in args)
+            return f"{tool} requires '{name}'. Provide all of: {required}."
+    return ""
+
+
 def _replace_across_files(graph: CallGraph, pattern: re.Pattern, replacement: str) -> tuple[int, int]:
     occurrences = files = 0
     for node in graph.nodes.values():
@@ -56,13 +74,15 @@ def build_tools(session: ReviewSession) -> list:
         return "\n".join(lines)
 
     @beta_tool
-    def read_function(address: str) -> str:
+    def read_function(address: str = "") -> str:
         """Read a function's full C source. Reading the same function again returns a
         short reminder instead of the full text (it is already in the conversation above).
 
         Args:
             address: function address, e.g. "0xeb08".
         """
+        if err := _require("read_function", [("address", address)]):
+            return err
         node, err = session._node_or_error(address)
         if err:
             return err
@@ -72,12 +92,14 @@ def build_tools(session: ReviewSession) -> list:
         return node.path.read_text(encoding="utf-8", errors="ignore")
 
     @beta_tool
-    def get_callers(address: str) -> str:
+    def get_callers(address: str = "") -> str:
         """List functions that call this one. Use it to check call sites against the definition.
 
         Args:
             address: address of the callee.
         """
+        if err := _require("get_callers", [("address", address)]):
+            return err
         node, err = session._node_or_error(address)
         if err:
             return err
@@ -87,12 +109,14 @@ def build_tools(session: ReviewSession) -> list:
         return "\n".join(f"0x{c.addr} | {c.name}" for c in callers)
 
     @beta_tool
-    def get_callees(address: str) -> str:
+    def get_callees(address: str = "") -> str:
         """List functions this one calls, split into resolved and placeholder.
 
         Args:
             address: function address.
         """
+        if err := _require("get_callees", [("address", address)]):
+            return err
         node, err = session._node_or_error(address)
         if err:
             return err
@@ -137,7 +161,7 @@ def build_tools(session: ReviewSession) -> list:
         return "\n".join(lines)
 
     @beta_tool
-    def edit_function(address: str, old_str: str, new_str: str) -> str:
+    def edit_function(address: str = "", old_str: str = "", new_str: str = "") -> str:
         """Exact string replace in one function file (local consistency fix).
 
         old_str must occur exactly once in the file; otherwise add more context to make it unique.
@@ -147,6 +171,11 @@ def build_tools(session: ReviewSession) -> list:
             old_str: text to replace (must be unique).
             new_str: replacement text.
         """
+        if err := _require(
+            "edit_function",
+            [("address", address), ("old_str", old_str), ("new_str", new_str)],
+        ):
+            return err
         node, err = session._node_or_error(address)
         if err:
             return err
@@ -165,7 +194,7 @@ def build_tools(session: ReviewSession) -> list:
         return f"Edited 0x{node.addr} ({node.name})."
 
     @beta_tool
-    def rewrite_function(address: str, new_code: str) -> str:
+    def rewrite_function(address: str = "", new_code: str = "") -> str:
         """Rewrite a whole function with new source (for larger structural improvements).
 
         Use only when you are sure the result is semantically equivalent and clearly more
@@ -176,6 +205,11 @@ def build_tools(session: ReviewSession) -> list:
             address: target function address.
             new_code: the function's new full C source.
         """
+        if err := _require(
+            "rewrite_function",
+            [("address", address), ("new_code", new_code)],
+        ):
+            return err
         node, err = session._node_or_error(address)
         if err:
             return err
@@ -193,7 +227,7 @@ def build_tools(session: ReviewSession) -> list:
         return f"Rewrote 0x{node.addr} ({node.name})."
 
     @beta_tool
-    def rename_symbol(old_name: str, new_name: str) -> str:
+    def rename_symbol(old_name: str = "", new_name: str = "") -> str:
         """Rename an identifier across the whole code set, on word boundaries (global naming fix).
 
         Use it to unify one semantic entity to a single name everywhere.
@@ -202,7 +236,12 @@ def build_tools(session: ReviewSession) -> list:
             old_name: existing identifier.
             new_name: unified new identifier.
         """
-        if not re.fullmatch(r"[A-Za-z_]\w*", new_name or ""):
+        if err := _require(
+            "rename_symbol",
+            [("old_name", old_name), ("new_name", new_name)],
+        ):
+            return err
+        if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             return f"new_name {new_name!r} is not a valid C identifier."
         pattern = re.compile(rf"\b{re.escape(old_name)}\b")
         occurrences, files = _replace_across_files(graph, pattern, new_name)
@@ -215,7 +254,7 @@ def build_tools(session: ReviewSession) -> list:
         return f"Renamed {old_name} -> {new_name}: {occurrences} occurrences across {files} files."
 
     @beta_tool
-    def rename_struct(old_name: str, new_name: str) -> str:
+    def rename_struct(old_name: str = "", new_name: str = "") -> str:
         """Rename or merge a struct type (for dedup and better names).
 
         - new_name does not exist -> pure rename.
@@ -230,7 +269,12 @@ def build_tools(session: ReviewSession) -> list:
             old_name: existing struct name.
             new_name: target struct name (a merge if it already exists).
         """
-        if not re.fullmatch(r"[A-Za-z_]\w*", new_name or ""):
+        if err := _require(
+            "rename_struct",
+            [("old_name", old_name), ("new_name", new_name)],
+        ):
+            return err
+        if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             return f"new_name {new_name!r} is not a valid C identifier."
         registry = session.struct_registry
         source = registry.lookup(old_name)
