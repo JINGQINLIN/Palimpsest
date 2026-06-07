@@ -85,3 +85,18 @@ class CallGraph:
             if callee_addr and callee_addr in self.nodes:
                 out.append(self.nodes[callee_addr])
         return out
+
+    def entries(self) -> list[FunctionNode]:
+        """Call-graph roots: functions not called by any other in-package function.
+
+        These are the natural starting points for a top-down consistency walk;
+        for a firmware service they typically include ``main``, signal handlers,
+        and externally-invoked init routines.
+        """
+        called: set[str] = set()
+        for node in self.nodes.values():
+            called.update(node.callees)
+        return sorted(
+            (node for node in self.nodes.values() if node.name not in called),
+            key=lambda n: n.addr,
+        )

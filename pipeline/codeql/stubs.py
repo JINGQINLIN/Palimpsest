@@ -90,6 +90,10 @@ ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
 ssize_t send(int sockfd, const void *buf, size_t len, int flags);
 ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
                const void *dest_addr, unsigned int addrlen);
+uint16_t ntohs(uint16_t net16);
+uint32_t ntohl(uint32_t net32);
+uint16_t htons(uint16_t host16);
+uint32_t htonl(uint32_t host32);
 int ioctl(int fd, unsigned long request, ...);
 int open(const char *pathname, int flags, ...);
 ssize_t read(int fd, void *buf, size_t count);

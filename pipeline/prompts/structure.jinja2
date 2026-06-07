@@ -18,6 +18,11 @@ Rules:
 - Convert goto/label into structured if/else/while/for/break/continue/return when the
   side-effect order is unchanged. Aim for very few remaining labels.
 - Drop decompiler noise: redundant casts, artificial boolean tests, one-use temporaries.
+- Collapse byte-swap idioms. The 32-bit pattern
+  `(x << 24) | ((x >> 8 & 0xff) << 16) | ((x >> 16 & 0xff) << 8) | (x >> 24)` is endian
+  conversion; rewrite as `ntohl(x)` when reading from a network buffer / packet field,
+  `htonl(x)` when writing to one, defaulting to `ntohl` if direction is unclear. The
+  16-bit variant `((x & 0xff) << 8) | (x >> 8)` becomes `ntohs(x)` / `htons(x)`.
 - Do NOT rename anything (the naming pass does that). Keep Ghidra placeholders unchanged
   (FUN_/DAT_/LAB_/sub_/byte_/word_/dword_/qword_).
 - Expose data flow: received buffers, option/packet pointers, fds, and lease values should
@@ -27,8 +32,10 @@ Struct reconstruction (do this whenever the access pattern is clear):
 - When a pointer is read/written at FIXED byte offsets, treat it as `struct NAME *` and rewrite
   the accesses as field access, e.g. `*(undefined4 *)(lease + 0x4)` -> `lease->yiaddr`.
 - Reuse a known struct (listed above) when its offsets match; define a new one only otherwise.
-- Name the struct by semantic role (dhcp_lease, ip_hdr, sockaddr). NEVER name it from a Ghidra
-  temporary, an address, or a size — no names like local_23c, packet_608, or config_entry_0x108.
+- Name the struct by its semantic role: a lowercase noun phrase derived from observed
+  field types and usage, like `dhcp_lease`, `ip_hdr`, `option_set`. The name must not
+  contain digits or start with `param_` / `local_` / `tmp_` / `field_` — those are
+  parser-side placeholders, never valid struct names.
 - Offsets are ground truth: give each field {offset, name, type, size} and the struct's total
   `size`. Prefer sized types (uint8_t/uint16_t/uint32_t/uint64_t, `T *`, `uint8_t name[N]`).
 - Do NOT write the struct definition in the code — only use `struct NAME *` and field access in

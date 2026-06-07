@@ -11,8 +11,11 @@ Known symbols: {{ known_symbols }}
 Unresolved symbols: {{ unknown_symbols }}
 
 Rules:
-- Rename locals/params to concise snake_case by semantic role (packet, lease_time,
-  command_buf, socket_fd, client_ip, recv_buf). Reveal source/sink roles where clear.
+- Rename ALL locals AND formal parameters to concise snake_case by semantic role (packet,
+  lease_time, command_buf, socket_fd, client_ip, recv_buf). The function signature in
+  <named> must contain zero `param_N` / `arg_N`; if a semantic name isn't clear, fall
+  back to type-shaped (`buf`, `len`, `addr`, `flags`, `ctx`) based on observed usage.
+  Reveal source/sink roles where clear.
 - Retype Ghidra scalars: undefined/undefined1 -> uint8_t, undefined2 -> uint16_t,
   undefined4 -> uint32_t, undefined8 -> uint64_t (keep the width); use a pointer or char*
   when usage clearly shows it.
@@ -22,10 +25,13 @@ Rules:
   Do not rename libc/syscall APIs. Do not invent structs, fields, or APIs.
 - Leave Ghidra placeholders (FUN_/DAT_/LAB_/sub_/byte_/word_/dword_/qword_) unchanged in
   <named>; the pipeline replaces them globally afterward.
-- registry_updates is what removes placeholders downstream, so resolve aggressively: ALWAYS
-  propose a name for the current Ghidra symbol, and for EACH unresolved symbol listed above
-  propose a name whenever the call/usage context gives medium or high confidence
-  (kind=function for FUN_/sub_, kind=global_var for DAT_/byte_/word_/dword_/qword_).
+- registry_updates removes placeholders downstream; resolve aggressively when in-body
+  evidence supports it. ALWAYS propose a name for the current Ghidra symbol. For EACH
+  unresolved symbol listed above, propose a name only when in-body evidence (string
+  literal, syscall, protocol constant, specific field-access pattern) supports medium
+  or high confidence — caller-context inference alone is not enough. Without such
+  evidence, leave the placeholder and skip the update. Use kind=function for FUN_/sub_,
+  kind=global_var for DAT_/byte_/word_/dword_/qword_.
 
 Output format — exactly three top-level blocks, in this order. Anything outside
 these blocks (including markdown code fences) will be discarded.

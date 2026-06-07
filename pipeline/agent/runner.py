@@ -19,12 +19,14 @@ _MAX_TOKENS = 8192
 _MAX_ITERATIONS = 1000
 _REVIEW_LOG = "agent_review.json"
 _KICKOFF = (
-    "Start the consistency review. The goal is a clean, high-quality CodeQL database. "
-    "Work systematically: build a global picture with list_functions + get_registry + "
-    "get_structs, then focus on signature/argument consistency between each definition and "
-    "all of its call sites, residual placeholders, struct-pointer call-site alignment, and "
-    "cross-function type mismatches. Gather evidence with get_callers / get_callees before "
-    "editing. When done, give a short bullet summary of what you changed (by category) and "
+    "Start the consistency review in two phases. "
+    "Phase A — bottom-up sweep: build the global picture with list_functions + "
+    "get_registry + get_structs, then fix residual placeholders, struct-pointer call-site "
+    "alignment, signature/argument mismatches, and naming duplicates. "
+    "Phase B — top-down walk: from the entry functions listed in the context, follow "
+    "get_callees + read_function down the call graph (≤ 4 levels per entry) to verify "
+    "parent→child semantic consistency. "
+    "Gather evidence before editing. When done, summarize what you changed by category and "
     "which suspicious points you left unchanged for lack of evidence."
 )
 
@@ -52,6 +54,13 @@ def _build_context(graph: CallGraph, struct_registry: StructRegistry) -> str:
             "may not be aligned yet — check and fix. Field names are authoritative in the shared "
             "header, so do not rename struct fields with rename_symbol."
         )
+
+    entries = graph.entries()
+    if entries:
+        lines.append(f"\n{len(entries)} entry functions (call-graph roots — Phase B starts here):")
+        for node in entries:
+            lines.append(f"0x{node.addr} | {node.name}")
+
     return "\n".join(lines)
 
 
