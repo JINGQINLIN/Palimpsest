@@ -87,3 +87,19 @@ def reset_registry_files(registry_path: Path) -> None:
         Path(str(registry_path) + "-shm"),
     ):
         path.unlink(missing_ok=True)
+
+
+def write_skipped_log(package_dir: Path, skipped: list[tuple[str, str, str]]) -> None:
+    """Write the per-function skip log produced by the reconstruction phase.
+
+    Each entry is ``(address, ghidra_name, reason)`` and is rendered as
+    ``0x<addr> | <name> | <reason>``. An empty list removes any stale log so
+    the file always reflects the current run.
+    """
+    path = package_dir / Path(FUNCTIONS_SUBDIR).parent / "skipped.txt"
+    if not skipped:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"0x{addr} | {name} | {reason}" for addr, name, reason in skipped]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")

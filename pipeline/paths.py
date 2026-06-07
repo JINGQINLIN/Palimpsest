@@ -13,6 +13,8 @@ OUTPUT_DIR = Path("output")
 CONTEXTS_DIR = Path("contexts")
 STUB_HEADER_FILENAME = "recopilot_stubs.h"
 TYPES_HEADER_FILENAME = "recopilot_types.h"
+MACROS_HEADER_FILENAME = "recopilot_macros.h"
+GLOBALS_HEADER_FILENAME = "recopilot_globals.h"
 
 
 def safe_dir_name(name: str) -> str:

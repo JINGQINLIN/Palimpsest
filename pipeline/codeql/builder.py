@@ -16,7 +16,14 @@ from pipeline.paths import (
     FUNCTIONS_SUBDIR,
     REGISTRY_SUBDIR,
 )
-from pipeline.registry import PLACEHOLDER_RE, NamingRegistry, StructRegistry, write_types_header
+from pipeline.registry import (
+    PLACEHOLDER_RE,
+    NamingRegistry,
+    StructRegistry,
+    write_globals_header,
+    write_macros_header,
+    write_types_header,
+)
 
 _FUNC_DEF_RE = re.compile(
     r"(?m)^\s*[A-Za-z_][\w\s\*]*\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{"
@@ -54,9 +61,10 @@ def apply_registry_and_export_sources(
 ) -> int:
     print_step(console, "3. CodeQL source")
 
+    registry_entries = registry.get_all()
     symbol_map = {
         sym: entry["canonical_name"]
-        for sym, entry in registry.get_all().items()
+        for sym, entry in registry_entries.items()
         if PLACEHOLDER_RE.fullmatch(sym)
     }
     if not symbol_map:
@@ -67,9 +75,18 @@ def apply_registry_and_export_sources(
         shutil.rmtree(codeql_dir)
     codeql_dir.mkdir(parents=True)
     write_stub_header(codeql_dir)
+    write_macros_header(codeql_dir, registry_entries)
+    write_globals_header(codeql_dir, registry_entries)
     structs = struct_registry.get_all()
     write_types_header(codeql_dir, structs)
+
+    macros_count = sum(
+        1 for e in registry_entries.values() if e["kind"] == "constant" and e.get("value")
+    )
+    globals_count = sum(1 for e in registry_entries.values() if e["kind"] == "global_var")
     print_item(console, "structs", len(structs))
+    print_item(console, "macros", macros_count)
+    print_item(console, "globals", globals_count)
 
     count = 0
     unresolved: dict[str, list[str]] = {}

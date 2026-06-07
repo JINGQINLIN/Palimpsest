@@ -3,7 +3,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from pipeline.paths import STUB_HEADER_FILENAME, TYPES_HEADER_FILENAME
+from pipeline.paths import (
+    GLOBALS_HEADER_FILENAME,
+    MACROS_HEADER_FILENAME,
+    STUB_HEADER_FILENAME,
+    TYPES_HEADER_FILENAME,
+)
 
 _TYPE_SIZE = {
     "char": 1, "uchar": 1, "byte": 1, "bool": 1, "_BYTE": 1,
@@ -104,6 +109,7 @@ def render_types_header(structs: dict[str, dict]) -> str:
         "#define RECOPILOT_TYPES_H",
         "",
         f'#include "{STUB_HEADER_FILENAME}"',
+        f'#include "{MACROS_HEADER_FILENAME}"',
         "",
         "/* Auto-generated from StructRegistry; offset-anchored, padding reproduces the layout. */",
         "",
@@ -117,12 +123,80 @@ def render_types_header(structs: dict[str, dict]) -> str:
         for name in _topo_order(structs):
             body.append(_render_struct(name, structs[name]))
             body.append("")
-    body += ["", "#endif /* RECOPILOT_TYPES_H */", ""]
+    body += [f'#include "{GLOBALS_HEADER_FILENAME}"', "", "#endif /* RECOPILOT_TYPES_H */", ""]
     return "\n".join(body)
 
 
-def write_types_header(codeql_dir: Path, structs: dict[str, dict]) -> Path:
+def _write_header(codeql_dir: Path, filename: str, content: str) -> Path:
+    """Persist a rendered header to ``codeql_dir/filename`` and return the path."""
     codeql_dir.mkdir(parents=True, exist_ok=True)
-    path = codeql_dir / TYPES_HEADER_FILENAME
-    path.write_text(render_types_header(structs), encoding="utf-8")
+    path = codeql_dir / filename
+    path.write_text(content, encoding="utf-8")
     return path
+
+
+def write_types_header(codeql_dir: Path, structs: dict[str, dict]) -> Path:
+    return _write_header(codeql_dir, TYPES_HEADER_FILENAME, render_types_header(structs))
+
+
+def render_macros_header(entries: dict[str, dict]) -> str:
+    """Render ``#define`` directives for ``kind=constant`` registry entries.
+
+    Empty value rows are skipped — a macro without a value would be a syntax
+    error in C. Entries sharing a canonical_name are collapsed to a single
+    ``#define`` (first occurrence wins), so the header stays clean when
+    different functions independently propose the same macro under different
+    symbol keys. The output is sorted by canonical name for stable diffs.
+    """
+    body = ["#ifndef RECOPILOT_MACROS_H", "#define RECOPILOT_MACROS_H", ""]
+    constants = sorted(
+        (e for e in entries.values() if e["kind"] == "constant" and e.get("value")),
+        key=lambda e: e["canonical_name"],
+    )
+    if not constants:
+        body.append("/* No constants reconstructed yet. */")
+    else:
+        body.append("/* Auto-generated from NamingRegistry (kind=constant). */")
+        body.append("")
+        seen: set[str] = set()
+        for entry in constants:
+            name = entry["canonical_name"]
+            if name in seen:
+                continue
+            seen.add(name)
+            body.append(f"#define {name} {entry['value']}")
+    body += ["", "#endif /* RECOPILOT_MACROS_H */", ""]
+    return "\n".join(body)
+
+
+def write_macros_header(codeql_dir: Path, entries: dict[str, dict]) -> Path:
+    return _write_header(codeql_dir, MACROS_HEADER_FILENAME, render_macros_header(entries))
+
+
+def render_globals_header(entries: dict[str, dict]) -> str:
+    """Render ``extern`` declarations for ``kind=global_var`` registry entries.
+
+    ``inferred_type`` is preserved verbatim when present; missing types fall
+    back to ``uint32_t`` with a trailing comment so downstream tools can flag
+    them for human review without breaking the parse.
+    """
+    body = ["#ifndef RECOPILOT_GLOBALS_H", "#define RECOPILOT_GLOBALS_H", ""]
+    globals_ = sorted(
+        (e for e in entries.values() if e["kind"] == "global_var"),
+        key=lambda e: e["canonical_name"],
+    )
+    if not globals_:
+        body.append("/* No globals reconstructed yet. */")
+    else:
+        body.append("/* Auto-generated from NamingRegistry (kind=global_var). */")
+        body.append("")
+        for entry in globals_:
+            type_str = entry.get("inferred_type") or "uint32_t"
+            trailer = "" if entry.get("inferred_type") else "  /* type unknown */"
+            body.append(f"extern {type_str} {entry['canonical_name']};{trailer}")
+    body += ["", "#endif /* RECOPILOT_GLOBALS_H */", ""]
+    return "\n".join(body)
+
+
+def write_globals_header(codeql_dir: Path, entries: dict[str, dict]) -> Path:
+    return _write_header(codeql_dir, GLOBALS_HEADER_FILENAME, render_globals_header(entries))

@@ -23,6 +23,11 @@ Rules:
   conversion; rewrite as `ntohl(x)` when reading from a network buffer / packet field,
   `htonl(x)` when writing to one, defaulting to `ntohl` if direction is unclear. The
   16-bit variant `((x & 0xff) << 8) | (x >> 8)` becomes `ntohs(x)` / `htons(x)`.
+- Literal constants compared to or assigned into network-byte-order protocol fields
+  (ARP opcodes, EtherType, sockaddr ports) appear in the binary in wire-order form.
+  Unwrap them with htons/ntohs so downstream macros can carry standard values:
+  `ar_op == 0x0100` → `ar_op == htons(1)`; `h_proto == 0x0008` → `h_proto == htons(0x0800)`.
+  Apply ONLY when the compared field is clearly a network protocol field.
 - Do NOT rename anything (the naming pass does that). Keep Ghidra placeholders unchanged
   (FUN_/DAT_/LAB_/sub_/byte_/word_/dword_/qword_).
 - Expose data flow: received buffers, option/packet pointers, fds, and lease values should
@@ -63,6 +68,20 @@ uint32_t parse_packet(struct dhcp_lease *lease, char *buf) {
 <struct_updates>
 [{"name": "dhcp_lease", "size": 44, "confidence": "high", "evidence": "...", "fields": [{"offset": 4, "name": "yiaddr", "type": "uint32_t", "size": 4}]}]
 </struct_updates>
+
+Skip alternative — if the body has no logic worth reconstructing (PLT stub,
+runtime helper, or trivial trampoline), output ONLY this single block instead
+of the two above:
+
+<skip>plt_stub</skip>
+
+Replace `plt_stub` with `runtime_helper` or `trivial_wrapper` when more
+appropriate. Skip ONLY when one of these holds; otherwise reconstruct:
+- The body is just `while (1) {}` or `for (;;) {}`
+- The body is a single indirect call `(*(code *)(...))(...)` with no logic
+- The body is a single forward call with arguments passed through unchanged
+
+When in doubt, reconstruct — a wrong skip loses a real function from analysis.
 
 Raw Ghidra pseudo-C:
 ```c

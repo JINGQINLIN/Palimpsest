@@ -15,7 +15,7 @@ from pipeline.registry import (
 )
 
 _FENCE_RE = re.compile(r"\A\s*```[a-zA-Z0-9_+-]*\s*\n(.*?)\n?```\s*\Z", re.DOTALL)
-_KNOWN_TAGS = ("structured", "struct_updates", "named", "naming_map", "registry_updates")
+_KNOWN_TAGS = ("structured", "struct_updates", "named", "naming_map", "registry_updates", "skip")
 _NEXT_TAG_RE = re.compile(r"<(?:" + "|".join(_KNOWN_TAGS) + r")>")
 _MAX_TOKENS = 16384
 
@@ -75,10 +75,22 @@ def _format_known_structs(structs: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
-def _parse_structure_output(text: str) -> tuple[str, list[dict[str, Any]]]:
-    structured = _strip_fence(_extract_block(text, "structured")) or _strip_fence(text)
+def _parse_structure_output(text: str) -> tuple[str, list[dict[str, Any]], str]:
+    """Returns ``(structured, struct_updates, skip_reason)``.
+
+    Prefers ``<structured>`` over ``<skip>`` when both are present: when the
+    model is uncertain enough to emit both, the safer default is to reconstruct.
+    Falls back to treating the whole text as the structured body when neither
+    block is found.
+    """
+    structured = _strip_fence(_extract_block(text, "structured"))
+    if not structured:
+        skip_reason = _extract_block(text, "skip")
+        if skip_reason:
+            return "", [], skip_reason
+        structured = _strip_fence(text)
     updates = _parse_json_list(_extract_block(text, "struct_updates"))
-    return structured, updates
+    return structured, updates, ""
 
 
 def _apply_struct_updates(
@@ -145,10 +157,13 @@ def _apply_registry_updates(
         confidence = str(item.get("confidence") or "").strip()
         evidence = str(item.get("evidence") or "").strip()
         inferred_type = str(item.get("inferred_type") or "").strip()
+        value = str(item.get("value") or "").strip()
 
         if not symbol or not canonical:
             continue
         if kind not in VALID_KINDS or confidence not in {"medium", "high"}:
+            continue
+        if PLACEHOLDER_RE.fullmatch(canonical):
             continue
 
         registry.update(
@@ -159,6 +174,7 @@ def _apply_registry_updates(
             kind=kind,
             inferred_type=inferred_type,
             source_file=source_file,
+            value=value,
         )
         applied.append(
             {
@@ -168,6 +184,7 @@ def _apply_registry_updates(
                 "confidence": confidence,
                 "inferred_type": inferred_type,
                 "evidence": evidence,
+                "value": value,
             }
         )
 
@@ -200,7 +217,9 @@ def process_function(
     )
     structure_text, step_usage = llm.complete(structure_prompt, max_tokens=_MAX_TOKENS)
     usage.merge(step_usage)
-    structured, struct_updates = _parse_structure_output(structure_text)
+    structured, struct_updates, skip_reason = _parse_structure_output(structure_text)
+    if skip_reason:
+        return {"skipped": True, "skip_reason": skip_reason, "usage": usage}
     if not structured:
         raise ValueError("LLM structure step returned empty output")
     applied_structs = _apply_struct_updates(struct_registry, struct_updates, source_file=binary_name)

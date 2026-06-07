@@ -18,7 +18,8 @@ Rules:
   Reveal source/sink roles where clear.
 - Retype Ghidra scalars: undefined/undefined1 -> uint8_t, undefined2 -> uint16_t,
   undefined4 -> uint32_t, undefined8 -> uint64_t (keep the width); use a pointer or char*
-  when usage clearly shows it.
+  when usage clearly shows it. For array globals, use the pointer form (`uint8_t *`) in
+  inferred_type — never put `[N]` there.
 - Keep the struct types and field access from the structure pass; do not revert to offset
   arithmetic and do not rename struct fields.
 - Do not change control flow, constants, memory accesses, call order, or pointer arithmetic.
@@ -32,6 +33,14 @@ Rules:
   or high confidence — caller-context inference alone is not enough. Without such
   evidence, leave the placeholder and skip the update. Use kind=function for FUN_/sub_,
   kind=global_var for DAT_/byte_/word_/dword_/qword_.
+- For magic numbers from a recognized standard (DHCP option codes, well-known network
+  ports, IOCTL/errno/signal numbers), propose `kind=constant` AND use the macro name
+  directly in <named> instead of the literal. Set `value` to the raw literal (hex or
+  decimal, no expressions). Symbol equals canonical_name. canonical_name must be a
+  valid C identifier (letter or underscore first, then [A-Za-z0-9_] only). For
+  network-byte-order constants (ports, EtherType, ARP opcodes), give the host-order
+  standard value, not the wire form. Pick ONE canonical name per concept — never both
+  `DHCP_LEASE_TIME` and `DHCP_OPT_LEASE_TIME`. Skip arbitrary magic numbers.
 
 Output format — exactly three top-level blocks, in this order. Anything outside
 these blocks (including markdown code fences) will be discarded.
@@ -57,7 +66,8 @@ param_1 -> buf | confidence: high | evidence: passed to recv()
 iVar1   -> count | confidence: medium | evidence: byte count argument
 </naming_map>
 <registry_updates>
-[{"symbol": "FUN_00012345", "canonical_name": "parse_packet", "kind": "function", "inferred_type": "uint32_t(char*, int)", "confidence": "high", "evidence": "..."}]
+[{"symbol": "FUN_00012345", "canonical_name": "parse_packet", "kind": "function", "inferred_type": "uint32_t(char*, int)", "confidence": "high", "evidence": "..."},
+ {"symbol": "DHCP_LEASE_TIME", "canonical_name": "DHCP_LEASE_TIME", "kind": "constant", "value": "0x33", "inferred_type": "uint8_t", "confidence": "high", "evidence": "RFC 2132 DHCP option 51"}]
 </registry_updates>
 
 Structured C:

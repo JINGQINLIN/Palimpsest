@@ -20,6 +20,7 @@ class NamingRegistry:
         confidence     TEXT NOT NULL CHECK(confidence IN ('low','medium','high')),
         evidence       TEXT NOT NULL DEFAULT '',
         source_file    TEXT NOT NULL DEFAULT '',
+        value          TEXT NOT NULL DEFAULT '',
         updated_at     TEXT NOT NULL
     )
     """
@@ -42,14 +43,15 @@ class NamingRegistry:
         kind: str = "function",
         inferred_type: str = "",
         source_file: str = "",
+        value: str = "",
     ) -> None:
         if kind not in VALID_KINDS:
             raise ValueError(f"invalid kind {kind!r}")
 
         self._conn.execute(
             """INSERT OR REPLACE INTO symbols
-               (symbol, kind, canonical_name, inferred_type, confidence, evidence, source_file, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (symbol, kind, canonical_name, inferred_type, confidence, evidence, source_file, value, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 symbol,
                 kind,
@@ -58,6 +60,7 @@ class NamingRegistry:
                 confidence,
                 evidence,
                 source_file,
+                value,
                 datetime.now(timezone.utc).isoformat(),
             ),
         )

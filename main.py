@@ -19,6 +19,7 @@ from pipeline.outputs import (
     reset_registry_files,
     write_function_outputs,
     write_registry_exports,
+    write_skipped_log,
 )
 from pipeline.paths import (
     CODEQL_DB_SUBDIR,
@@ -113,7 +114,13 @@ def reconstruct_function(
     struct_registry: StructRegistry,
     llm: LLMClient,
     domain_context: str,
-) -> TokenUsage:
+) -> dict:
+    """Run structure + naming passes for one function and persist artifacts.
+
+    Returns the artifacts dict. When the structure pass emits ``<skip>``, the
+    dict contains ``{"skipped": True, "skip_reason": ..., "usage": ...}`` and
+    nothing is written to disk.
+    """
     known_symbols, unknown_symbols = prefetch(ctx.code, registry)
     artifacts = process_function(
         binary_name=binary_name,
@@ -127,9 +134,10 @@ def reconstruct_function(
         llm=llm,
         domain_context=domain_context,
     )
-    func_dir = package_dir / FUNCTIONS_SUBDIR / f"0x{ctx.address}"
-    write_function_outputs(func_dir, artifacts)
-    return artifacts.get("usage") or TokenUsage()
+    if not artifacts.get("skipped"):
+        func_dir = package_dir / FUNCTIONS_SUBDIR / f"0x{ctx.address}"
+        write_function_outputs(func_dir, artifacts)
+    return artifacts
 
 
 def run_reconstruction(
@@ -141,7 +149,7 @@ def run_reconstruction(
     struct_registry: StructRegistry,
     llm: LLMClient,
     domain_context: str,
-) -> tuple[TokenUsage, list[tuple[str, str]]]:
+) -> tuple[TokenUsage, list[tuple[str, str]], list[tuple[str, str, str]]]:
     plan = topo_plan(contexts)
 
     print_step(console, "2. Semantic reconstruction")
@@ -153,6 +161,7 @@ def run_reconstruction(
 
     total_usage = TokenUsage()
     failed: list[tuple[str, str]] = []
+    skipped: list[tuple[str, str, str]] = []
 
     with make_progress(console) as progress:
         task = progress.add_task("reconstructing", total=len(contexts))
@@ -163,7 +172,7 @@ def run_reconstruction(
                 description=f"{position}  0x{addr_hex}  {ctx.ghidra_name}",
             )
             try:
-                usage = reconstruct_function(
+                artifacts = reconstruct_function(
                     binary_name=binary_name,
                     package_dir=package_dir,
                     ctx=ctx,
@@ -172,13 +181,15 @@ def run_reconstruction(
                     llm=llm,
                     domain_context=domain_context,
                 )
-                total_usage.merge(usage)
+                total_usage.merge(artifacts.get("usage") or TokenUsage())
+                if artifacts.get("skipped"):
+                    skipped.append((addr_hex, ctx.ghidra_name, artifacts["skip_reason"]))
             except Exception as exc:
                 failed.append((addr_hex, str(exc)))
                 console.print(f"  [red]failed[/red] 0x{addr_hex}: {exc}")
             progress.advance(task)
 
-    return total_usage, failed
+    return total_usage, failed, skipped
 
 
 def main() -> int:
@@ -201,11 +212,11 @@ def main() -> int:
         console.print(f"[red]error:[/red] {exc}")
         return 1
     contexts = filter_contexts(raw_contexts)
-    skipped = len(raw_contexts) - len(contexts)
+    runtime_filtered = len(raw_contexts) - len(contexts)
     if not contexts:
         console.print("[red]error:[/red] no analyzable functions after filtering")
         print_item(console, "raw funcs", len(raw_contexts))
-        print_item(console, "skipped", skipped)
+        print_item(console, "runtime", runtime_filtered)
         return 1
 
     reset_core_outputs(package_dir)
@@ -225,7 +236,7 @@ def main() -> int:
     struct_registry = StructRegistry(struct_registry_path)
 
     try:
-        total_usage, failed = run_reconstruction(
+        total_usage, failed, skipped = run_reconstruction(
             binary_name=safe_dir_name(args.binary.name),
             package_dir=package_dir,
             contexts=contexts,
@@ -235,6 +246,7 @@ def main() -> int:
             domain_context=load_domain_context(config.context),
         )
         write_registry_exports(package_dir, registry)
+        write_skipped_log(package_dir, skipped)
         apply_registry_and_export_sources(
             package_dir=package_dir,
             registry=registry,
@@ -257,10 +269,11 @@ def main() -> int:
 
     codeql_ok = create_codeql_database(package_dir=package_dir, codeql_exe=config.codeql_exe, console=console)
 
-    ok = len(contexts) - len(failed)
+    ok = len(contexts) - len(failed) - len(skipped)
     print_step(console, "[green]Done[/green]")
     print_item(console, "raw funcs", len(raw_contexts))
-    print_item(console, "skipped", skipped)
+    print_item(console, "runtime", runtime_filtered)
+    print_item(console, "trivial", len(skipped))
     print_item(console, "functions", f"{ok} ok, {len(failed)} failed")
     print_item(console, "tokens", total_usage.format())
     print_item(console, "recon", package_dir / FUNCTIONS_SUBDIR)

@@ -25,6 +25,11 @@ saw callers and callees together). `codeql_guide.md` is the standard for CodeQL-
 4. Cross-function type consistency.
 5. Structural cleanup, sparingly: only when clearly better and semantically equivalent
    (leftover goto, redundant nesting, dead code).
+6. Macro consolidation: call `get_registry` to see all `kind=constant` entries. When
+   two different canonical names map to the same value (e.g., `DHCP_END=0xff` and
+   `DHCP_OPT_END=0xff`), pick the shorter standard form and use `rename_symbol` to
+   replace the other across all .c files. The dropped macro may remain in
+   `recopilot_macros.h` as a dead `#define` — that is harmless.
 
 ## Phase B — Top-down consistency walk
 
