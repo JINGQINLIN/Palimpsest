@@ -21,6 +21,11 @@ saw callers and callees together). `codeql_guide.md` is the standard for CodeQL-
    int/raw pointers (use get_structs + get_callers).
 2. Naming consistency: unify one entity to one name (rename_symbol); name residual
    FUN_/DAT_/... placeholders only when the call context makes the meaning clear.
+   DHCP: `DHCPINFORM` call sites must target inform handlers (`send_inform_reply` /
+   `handle_dhcp_inform`), never `send_dhcp_nak`. Do not use `build_dhcp_offer` inside
+   NAK/ACK/INFORM handlers. In `udhcpd_main`, if a stack buffer is cast to
+   `struct dhcp_packet *` but declared smaller than 0x224 bytes, widen it to
+   `struct dhcp_packet`.
 3. Struct dedup: merge duplicate layouts of the same struct (rename_struct); see codeql_guide.md.
 4. Cross-function type consistency.
 5. Structural cleanup, sparingly: only when clearly better and semantically equivalent

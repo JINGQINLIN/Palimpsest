@@ -11,6 +11,7 @@ Known symbols: {{ known_symbols }}
 Unresolved symbols: {{ unknown_symbols }}
 
 Rules:
+- Apply Firmware Decompilation Distortions from domain context when present (naming pass).
 - Rename ALL locals AND formal parameters to concise snake_case by semantic role (packet,
   lease_time, command_buf, socket_fd, client_ip, recv_buf). The function signature in
   <named> must contain zero `param_N` / `arg_N`; if a semantic name isn't clear, fall
@@ -33,6 +34,11 @@ Rules:
   or high confidence — caller-context inference alone is not enough. Without such
   evidence, leave the placeholder and skip the update. Use kind=function for FUN_/sub_,
   kind=global_var for DAT_/byte_/word_/dword_/qword_.
+  Do not give the same canonical_name to functions with different roles or signatures.
+  Name by role (see Protocol Background message handlers):
+  build_dhcp_reply = init reply; copy/fill helpers = copy fields from request;
+  build_dhcp_offer = OFFER path only; dispatch_*/route_* = send; handle_* = switch target.
+  Never name an INFORM handler send_dhcp_nak; never call build_dhcp_offer from NAK/ACK/INFORM.
 - For magic numbers from a recognized standard (DHCP option codes, well-known network
   ports, IOCTL/errno/signal numbers), propose `kind=constant` AND use the macro name
   directly in <named> instead of the literal. Set `value` to the raw literal (hex or

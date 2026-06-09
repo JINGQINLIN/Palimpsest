@@ -4,14 +4,10 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 
+from pipeline.addresses import normalize_address
 from pipeline.stages.ghidra import FunctionContext
 
 _FUN_PLACEHOLDER_RE = re.compile(r"\bFUN_([0-9a-fA-F]+)\b")
-
-
-def _normalize_addr(hex_str: str) -> str:
-    """Return the lowercase zero-padded form used as contexts dict keys."""
-    return f"{int(hex_str, 16):08x}"
 
 
 def _build_callee_map(contexts: dict[str, FunctionContext]) -> dict[str, set[str]]:
@@ -43,7 +39,7 @@ def _build_callee_map(contexts: dict[str, FunctionContext]) -> dict[str, set[str
         targets: set[str] = set()
 
         for hex_suffix in _FUN_PLACEHOLDER_RE.findall(ctx.code):
-            target = _normalize_addr(hex_suffix)
+            target = normalize_address(hex_suffix)
             if target in contexts and target != addr:
                 targets.add(target)
 

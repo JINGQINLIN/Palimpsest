@@ -7,7 +7,7 @@ from typing import Any
 from rich.console import Console
 
 from pipeline.console import print_item, print_step
-from pipeline.llm import LLMClient
+from pipeline.llm import LLMClient, TokenUsage
 from pipeline.paths import FUNCTIONS_SUBDIR, REPORTS_SUBDIR
 
 REPORT_NAME = "firmware_report.md"
@@ -174,17 +174,17 @@ def _render_evidence(context: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def run_report(package_dir: Path, llm: LLMClient, console: Console) -> Path | None:
+def run_report(package_dir: Path, llm: LLMClient, console: Console) -> tuple[Path | None, TokenUsage]:
     print_step(console, "Firmware report")
     context = _collect_context(package_dir)
     if context["function_count"] == 0:
         print_item(console, "status", "no summary.json files found")
-        print_item(console, "hint", "run scripts/summarize_functions.py first")
-        return None
+        print_item(console, "hint", "run: python scripts/postprocess.py <target>")
+        return None, TokenUsage()
 
     print_item(console, "functions", context["function_count"])
     print_item(console, "candidates", len(context["vulnerability_candidates"]))
-    report, _usage = llm.complete(_build_prompt(context), max_tokens=8192)
+    report, usage = llm.complete(_build_prompt(context), max_tokens=8192)
     final = report.strip()
     if evidence := _render_evidence(context):
         final = final.rstrip() + "\n\n---\n\n" + evidence
@@ -194,4 +194,4 @@ def run_report(package_dir: Path, llm: LLMClient, console: Console) -> Path | No
     report_path = report_dir / REPORT_NAME
     report_path.write_text(final + "\n", encoding="utf-8")
     print_item(console, "output", report_path)
-    return report_path
+    return report_path, usage

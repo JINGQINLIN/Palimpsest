@@ -4,19 +4,9 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pipeline.addresses import addr_key
+from pipeline.c_source import first_function_name
 from pipeline.registry import PLACEHOLDER_RE
-
-_FUNC_DEF_RE = re.compile(
-    r"(?m)^\s*[A-Za-z_][\w\s\*]*?\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{"
-)
-
-
-def addr_key(raw: str) -> str:
-    text = raw.strip().lower()
-    if text.startswith("0x"):
-        text = text[2:]
-    text = text.lstrip("0")
-    return text or "0"
 
 
 @dataclass
@@ -40,13 +30,12 @@ class CallGraph:
             head = path.stem[2:] if path.stem.startswith("0x") else path.stem
             addr = addr_key(head.split("_", 1)[0])
             text = path.read_text(encoding="utf-8", errors="ignore")
-            match = _FUNC_DEF_RE.search(text)
-            if match:
-                name = match.group(1)
-            elif "_" in head:
-                name = head.split("_", 1)[1]
-            else:
-                name = f"FUN_{addr}"
+            name = first_function_name(text)
+            if not name:
+                if "_" in head:
+                    name = head.split("_", 1)[1]
+                else:
+                    name = f"FUN_{addr}"
             self.nodes[addr] = FunctionNode(addr=addr, name=name, path=path)
             self._name_to_addr.setdefault(name, addr)
             sources[addr] = text
@@ -87,12 +76,7 @@ class CallGraph:
         return out
 
     def entries(self) -> list[FunctionNode]:
-        """Call-graph roots: functions not called by any other in-package function.
-
-        These are the natural starting points for a top-down consistency walk;
-        for a firmware service they typically include ``main``, signal handlers,
-        and externally-invoked init routines.
-        """
+        # Roots: in-package functions with no in-package callers.
         called: set[str] = set()
         for node in self.nodes.values():
             called.update(node.callees)

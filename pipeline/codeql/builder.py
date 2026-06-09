@@ -7,6 +7,11 @@ from pathlib import Path
 
 from rich.console import Console
 
+from pipeline.codeql.export_names import (
+    apply_codeql_name,
+    build_export_map,
+    plan_codeql_names,
+)
 from pipeline.codeql.stubs import write_stub_header
 from pipeline.console import print_item, print_step
 from pipeline.outputs import copy_to_codeql_src
@@ -25,10 +30,6 @@ from pipeline.registry import (
     write_types_header,
 )
 
-_FUNC_DEF_RE = re.compile(
-    r"(?m)^\s*[A-Za-z_][\w\s\*]*\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{"
-)
-
 
 def _write_unresolved_symbols(package_dir: Path, unresolved: dict[str, list[str]]) -> None:
     report_path = package_dir / REGISTRY_SUBDIR / "unresolved_symbols.txt"
@@ -43,14 +44,6 @@ def _write_unresolved_symbols(package_dir: Path, unresolved: dict[str, list[str]
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _lookup_function_name(registry: NamingRegistry, ghidra_name: str, code: str) -> str | None:
-    if entry := registry.lookup(ghidra_name):
-        return entry["canonical_name"]
-    if match := _FUNC_DEF_RE.search(code):
-        return match.group(1)
-    return None
-
-
 def apply_registry_and_export_sources(
     *,
     package_dir: Path,
@@ -62,12 +55,12 @@ def apply_registry_and_export_sources(
     print_step(console, "3. CodeQL source")
 
     registry_entries = registry.get_all()
-    symbol_map = {
-        sym: entry["canonical_name"]
-        for sym, entry in registry_entries.items()
-        if PLACEHOLDER_RE.fullmatch(sym)
-    }
-    if not symbol_map:
+    functions_dir = package_dir / FUNCTIONS_SUBDIR
+    base_names, codeql_names, duplicate_bases = plan_codeql_names(
+        functions_dir, registry, contexts
+    )
+    export_map = build_export_map(registry_entries, codeql_names)
+    if not export_map:
         print_item(console, "registry", "empty; no placeholders replaced")
 
     codeql_dir = package_dir / CODEQL_SUBDIR
@@ -90,31 +83,31 @@ def apply_registry_and_export_sources(
 
     count = 0
     unresolved: dict[str, list[str]] = {}
-    functions_dir = package_dir / FUNCTIONS_SUBDIR
     for func_dir in sorted(functions_dir.glob("0x*")):
         named_path = func_dir / "named.c"
         if not named_path.is_file():
             continue
 
+        addr_hex = func_dir.name[2:]
         named = named_path.read_text(encoding="utf-8")
-        for placeholder, canonical_name in symbol_map.items():
-            pattern = rf"\b{re.escape(placeholder)}\b"
-            named = re.sub(pattern, canonical_name, named)
+        for placeholder, replacement in export_map.items():
+            named = re.sub(rf"\b{re.escape(placeholder)}\b", replacement, named)
+        base_name = base_names.get(addr_hex)
+        codeql_name = codeql_names[addr_hex]
+        named = apply_codeql_name(named, base_name, codeql_name)
         named_path.write_text(named, encoding="utf-8")
         remaining = sorted(set(PLACEHOLDER_RE.findall(named)))
         if remaining:
             unresolved[func_dir.name] = remaining
 
-        addr_hex = func_dir.name[2:]
-        ctx = contexts.get(addr_hex)
-        ghidra_name = ctx.ghidra_name if ctx else f"FUN_{addr_hex}"
-        function_name = _lookup_function_name(registry, ghidra_name, named)
-        copy_to_codeql_src(codeql_dir, addr_hex, named, function_name)
+        copy_to_codeql_src(codeql_dir, addr_hex, named, codeql_name)
         count += 1
 
     print_item(console, "files", f"{count} C files")
     print_item(console, "output", codeql_dir)
-    print_item(console, "symbols", len(symbol_map))
+    print_item(console, "symbols", len(export_map))
+    if duplicate_bases:
+        print_item(console, "collisions", ", ".join(sorted(duplicate_bases)))
     print_item(console, "unresolved", sum(len(items) for items in unresolved.values()))
     _write_unresolved_symbols(package_dir, unresolved)
     return count

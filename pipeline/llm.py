@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import anthropic
 
+from config import PipelineConfig
+
 for _name in ("anthropic", "httpx", "httpcore"):
     logging.getLogger(_name).setLevel(logging.WARNING)
 
@@ -62,3 +64,12 @@ class LLMClient:
         usage = TokenUsage()
         usage.add_anthropic(getattr(msg, "usage", None))
         return text, usage
+
+
+def client_from_config(config: PipelineConfig) -> LLMClient:
+    return LLMClient(
+        api_key=config.anthropic_api_key,
+        base_url=config.anthropic_base_url,
+        model=config.reconstruction_model,
+        timeout=config.llm_timeout_seconds,
+    )

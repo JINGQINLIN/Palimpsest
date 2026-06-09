@@ -35,6 +35,7 @@ Thumbs.db
 # 临时备份
 legacy_*.json
 
-# dev/ 临时脚本副产物
-dev/__pycache__/
-dev/*.pyc
+# 本地评测样本（不入库）
+samples/r9000_*
+samples/netgear_r9000/
+

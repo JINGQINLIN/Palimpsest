@@ -1,4 +1,4 @@
-domain: "udhcpd — DHCP server in embedded Linux router firmware."
+domain: "udhcpd — DHCP server in embedded Linux router firmware. Binaries may include vendor patches (NAS, bond, extra system() calls) not present in upstream udhcpd."
 
 protocol: |
   DHCP (RFC 2131/2132). Option 53 message type: 1=DISCOVER 2=OFFER 3=REQUEST
@@ -6,7 +6,117 @@ protocol: |
   Common options: 12=HostName 50=RequestedIP 51=LeaseTime 53=MsgType 54=ServerID.
   Server UDP port 67, client 68. Multi-byte fields are network byte order (big-endian).
 
+  DHCPREQUEST handling (RFC 2131 states):
+  - SELECTING: client sends Requested IP + Server ID; server ACKs if lease matches.
+  - INIT-REBOOT: client sends Requested IP, no Server ID; ACK if lease IP matches.
+  - RENEWING/REBINDING: no Requested IP; ACK if ciaddr matches lease.
+
+  Message handlers (name functions by role; match switch/call sites):
+  - DHCPDISCOVER (1) -> handle_dhcp_discover / sendOffer
+  - DHCPREQUEST (3)  -> handle_dhcp_request / sendACK / sendNAK (not INFORM)
+  - DHCPDECLINE (4)  -> clear lease / handle_dhcp_decline
+  - DHCPRELEASE (7)  -> expire lease / handle_dhcp_release
+  - DHCPINFORM (8)   -> send_inform_reply / handle_dhcp_inform — NEVER send_dhcp_nak or handle_dhcp_nak
+  - NAK path only    -> handle_dhcp_nak / sendNAK with msg_type DHCP_NAK (6), not INFORM (8)
+
 platform: |
   socket(AF_INET=2, SOCK_DGRAM=2, 0) = UDP socket. ioctl 0x8915 = SIOCGIFINDEX.
   signal 10=SIGUSR1, 15=SIGTERM. system() runs a shell command — command-injection
   risk if the string is externally controlled.
+  Router firmware often uses both UDP socket (port 67) and a raw socket for DHCP;
+  do not collapse them into one fd.
+
+layouts:
+  dhcp_message:
+    struct: dhcp_packet
+    size: 0x224
+    fields:
+      - { offset: 0x00, name: op, type: uint8_t }
+      - { offset: 0x01, name: htype, type: uint8_t }
+      - { offset: 0x02, name: hlen, type: uint8_t }
+      - { offset: 0x03, name: hops, type: uint8_t }
+      - { offset: 0x04, name: xid, type: uint32_t }
+      - { offset: 0x08, name: secs, type: uint16_t }
+      - { offset: 0x0a, name: flags, type: uint16_t }
+      - { offset: 0x0c, name: ciaddr, type: uint32_t }
+      - { offset: 0x10, name: yiaddr, type: uint32_t }
+      - { offset: 0x14, name: siaddr, type: uint32_t }
+      - { offset: 0x18, name: giaddr, type: uint32_t }
+      - { offset: 0x1c, name: chaddr, type: "uint8_t[16]" }
+      - { offset: 0xec, name: cookie, type: uint32_t }
+      - { offset: 0xf0, name: options, type: "uint8_t[308]" }
+
+  dhcp_lease:
+    struct: dhcp_lease
+    size: 0x18
+    fields:
+      - { offset: 0x00, name: chaddr, type: "uint8_t[16]" }
+      - { offset: 0x10, name: yiaddr, type: uint32_t }
+      - { offset: 0x14, name: expires, type: uint32_t }
+
+distortions:
+  - id: IoT-D1
+    layer: structure
+    pattern: "Unrelated types on the same stack slot (fd_set*, int* as config, void* as lease)."
+    fix: "Re-type from usage: sizeof/read length, field offsets, callee arg types — not Ghidra decls."
+    example: |
+      BAD:  fd_set *lease = find_lease_by_chaddr(...);
+      GOOD: struct dhcp_lease *lease = find_lease_by_chaddr(...);
+
+  - id: IoT-D2
+    layer: structure
+    pattern: "Local buffer smaller than read/memset length, or cast to struct dhcp_packet without resizing the array."
+    fix: "If read/recv/memset uses length N, or buf is cast to (struct dhcp_packet *), declare struct dhcp_packet buf (0x224) — not uint8_t buf[4]. Apply even in large functions."
+    example: |
+      BAD:  uint8_t auStack_510[4]; get_dhcp_option((struct dhcp_packet *)auStack_510, ...);
+      BAD:  uint8_t packet_buf[4]; read(socket_fd, packet_buf, 0x224);
+      GOOD: struct dhcp_packet packet_buf; read(socket_fd, &packet_buf, sizeof(packet_buf));
+
+  - id: IoT-D3
+    layer: structure
+    pattern: "Protocol packet accessed at fixed offsets but typed as opaque padding."
+    fix: "Match Known Layouts; use field names (yiaddr, chaddr, flags) in code and struct_updates."
+    example: |
+      BAD:  *(uint32_t *)((uint8_t *)pkt + 0x10);
+      GOOD: pkt->yiaddr;
+
+  - id: IoT-D4
+    layer: structure
+    pattern: "Ghidra residue: undefined/undefined1-8, iVar/uVar/puVar names, unaff_/extraout_."
+    fix: "Replace with sized uint types and semantic locals; delete dead unaff_/extraout_ uses."
+    example: |
+      BAD:  undefined4 uVar1; iVar5 = FUN_00001234();
+      GOOD: uint32_t lease_time; lease_time = FUN_00001234();
+
+  - id: IoT-D5
+    layer: structure
+    pattern: "Wrong struct for domain object (e.g. arp_packet for DHCP payload)."
+    fix: "Use dhcp_packet when offsets match dhcp_message layout; reserve arp_packet for ARP headers only."
+    example: |
+      BAD:  void send_reply(struct arp_packet *dhcp_pkt, ...);
+      GOOD: void dispatch_dhcp_reply(struct dhcp_packet *dhcp_pkt, ...);
+
+  - id: IoT-D6
+    layer: structure
+    pattern: "libc internal fields (FILE->_IO_write_base, _lock) used as data access."
+    fix: "Use fgetc/fread/fgets on the FILE*; do not read libc struct internals."
+    example: |
+      BAD:  req = *nas_fp->_IO_write_base;
+      GOOD: req = fgetc(nas_fp);
+
+  - id: IoT-D7
+    layer: naming
+    pattern: "Same canonical name for different roles, or message-specific names used on the wrong DHCP type."
+    fix: |
+      build_dhcp_reply = init reply header only (op/cookie/msg_type).
+      copy_* / fill_* = copy xid/chaddr from client packet (not build_dhcp_offer unless OFFER-only path).
+      build_dhcp_offer = DISCOVER/OFFER allocation only — do not call from NAK/ACK/INFORM handlers.
+      dispatch_* / route_* = send on wire. handle_* = one switch-case target.
+      INFORM callees must be send_inform_reply / handle_dhcp_inform, never send_dhcp_nak.
+    example: |
+      BAD:  FUN_a -> send_dhcp_reply (build), FUN_b -> send_dhcp_reply (send)
+      BAD:  handle_dhcp_nak(){ build_dhcp_offer(..., 6); }
+      BAD:  case DHCPINFORM: send_dhcp_nak(...);
+      GOOD: FUN_a -> build_dhcp_reply, FUN_b -> dispatch_dhcp_reply
+      GOOD: handle_dhcp_nak(){ build_dhcp_reply(..., DHCP_NAK); dispatch_...(..., 1); }
+      GOOD: case DHCPINFORM: send_inform_reply(...);

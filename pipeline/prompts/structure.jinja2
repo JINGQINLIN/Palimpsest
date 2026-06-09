@@ -30,13 +30,21 @@ Rules:
   Apply ONLY when the compared field is clearly a network protocol field.
 - Do NOT rename anything (the naming pass does that). Keep Ghidra placeholders unchanged
   (FUN_/DAT_/LAB_/sub_/byte_/word_/dword_/qword_).
+- Apply Firmware Decompilation Distortions and Known Layouts from domain context when present.
+- Never leave undefined/undefined1-8, iVar/uVar names, unaff_/extraout_, or libc internals
+  (FILE->_IO_*).
+- Buffer sizing (mandatory): if read/recv/memset uses length N, the buffer MUST hold at
+  least N bytes. If a buffer is cast to `(struct dhcp_packet *)` or passed to get_dhcp_option,
+  declare `struct dhcp_packet name` (size 0x224 per Known Layouts) — never `uint8_t name[4]`
+  with only a pointer cast. This applies in large functions too.
 - Expose data flow: received buffers, option/packet pointers, fds, and lease values should
   have a clear shape; turn fixed-offset access into struct fields (below).
 
 Struct reconstruction (do this whenever the access pattern is clear):
 - When a pointer is read/written at FIXED byte offsets, treat it as `struct NAME *` and rewrite
   the accesses as field access, e.g. `*(undefined4 *)(lease + 0x4)` -> `lease->yiaddr`.
-- Reuse a known struct (listed above) when its offsets match; define a new one only otherwise.
+- Reuse a known struct (listed above or in Known Layouts) when its offsets match; define a new
+  one only otherwise. Prefer layout field names over anonymous padding.
 - Name the struct by its semantic role: a lowercase noun phrase derived from observed
   field types and usage, like `dhcp_lease`, `ip_hdr`, `option_set`. The name must not
   contain digits or start with `param_` / `local_` / `tmp_` / `field_` — those are

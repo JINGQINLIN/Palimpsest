@@ -6,25 +6,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import yaml
 from rich.console import Console
 
+from config import ghidra_settings, load_config
+from pipeline.addresses import normalize_address
 from pipeline.console import make_progress, print_item, print_step
 
-_CONFIG_FILE = Path("local_config.yaml")
 console = Console()
-
-
-def normalize_address(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, int):
-        return f"{value:08x}"
-    text = str(value).strip().lower().removeprefix("0x")
-    try:
-        return f"{int(text, 16):08x}" if text else ""
-    except ValueError:
-        return ""
 
 
 @dataclass
@@ -65,16 +53,19 @@ def load_raw_package(raw_dir: Path) -> dict[str, FunctionContext]:
     return contexts
 
 
-def load_ghidra_config() -> tuple[str, str]:
-    if not _CONFIG_FILE.is_file():
-        raise RuntimeError(f"{_CONFIG_FILE} not found")
+def filter_runtime_contexts(contexts: dict[str, FunctionContext]) -> dict[str, FunctionContext]:
+    def is_runtime_stub(name: str) -> bool:
+        return name == "_start" or name.startswith(("_INIT", "_FINI", "_DT_INIT", "_DT_FINI"))
 
-    data = yaml.safe_load(_CONFIG_FILE.read_text(encoding="utf-8")) or {}
-    ghidra_dir = data.get("GHIDRA_INSTALL_DIR", "")
-    mcp_exe = data.get("PYGHIDRA_MCP_EXE", "") or "pyghidra-mcp"
-    if not ghidra_dir:
-        raise RuntimeError("Set GHIDRA_INSTALL_DIR in local_config.yaml")
-    return ghidra_dir, mcp_exe
+    return {
+        addr: ctx
+        for addr, ctx in contexts.items()
+        if not is_runtime_stub(ctx.ghidra_name)
+    }
+
+
+def load_ghidra_config() -> tuple[str, str]:
+    return ghidra_settings(load_config())
 
 
 def _normalize_code(text: str) -> str:
