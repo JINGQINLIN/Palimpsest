@@ -76,7 +76,6 @@ class CallGraph:
         return out
 
     def entries(self) -> list[FunctionNode]:
-        # Roots: in-package functions with no in-package callers.
         called: set[str] = set()
         for node in self.nodes.values():
             called.update(node.callees)

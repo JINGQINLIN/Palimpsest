@@ -9,8 +9,12 @@ libc/Linux/firmware declarations).
 
 - Remove undeclared Ghidra register pseudo-symbols (`unaff_*`, `extraout_*`, `in_*`, `unique0x*`):
   replace with the real variable, delete the dead code, or add a minimal declaration and flag it.
-- Every type must resolve — reduce unknown types to ones in the stub header; don't invent
-  undeclared types.
+- Every type must resolve to one already declared in `recopilot_stubs.h` or `recopilot_types.h`,
+  including types used inside casts. An undeclared type name makes the parser drop the WHOLE
+  statement, silently deleting the call inside it from the database — e.g. `(uintptr_t)f(x)` or
+  `FILE *p = popen(...)` lose the `f`/`popen` call if that type is absent. Never introduce a new
+  typedef or cast through a type that is not already declared; if a cast is needed, use one that
+  exists in the stub (`int` / `long` / `void *` / `uint32_t` / a declared `struct`).
 - A callee with no declaration cannot become a call edge: stub-declared APIs are fine; for another
   reconstructed function, add a forward declaration matching its definition.
 - Balanced braces, valid statements; delete unreachable blocks that reference undeclared symbols.

@@ -88,3 +88,15 @@ def load_layer_context(name: str, layer: str) -> str:
         sections.append(block)
 
     return "\n\n".join(sections)
+
+
+_LANGUAGE_NAMES = {"en": "English", "zh": "Chinese (中文)"}
+
+
+def language_directive(language: str) -> str:
+    name = _LANGUAGE_NAMES.get(language.lower(), language)
+    return (
+        f"Write all explanatory prose — evidence text, naming-map notes, and summaries — in {name}. "
+        "Code, identifiers, canonical names, struct and field names, and JSON keys must stay in "
+        "English ASCII regardless."
+    )

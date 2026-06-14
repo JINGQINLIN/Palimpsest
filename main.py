@@ -28,7 +28,7 @@ from pipeline.paths import (
     REGISTRY_SUBDIR,
     safe_dir_name,
 )
-from pipeline.prompts import load_layer_context
+from pipeline.prompts import language_directive, load_layer_context
 from pipeline.registry import NamingRegistry, StructRegistry
 from pipeline.stages.ghidra import (
     fetch as fetch_raw_package,
@@ -113,6 +113,7 @@ def main() -> int:
     llm = client_from_config(config)
     registry = NamingRegistry(registry_path)
     struct_registry = StructRegistry(struct_registry_path)
+    lang_directive = language_directive(config.language)
 
     try:
         total_usage, failed, skipped = run_reconstruction(
@@ -124,6 +125,7 @@ def main() -> int:
             llm=llm,
             structure_context=load_layer_context(config.context, "structure"),
             naming_context=load_layer_context(config.context, "naming"),
+            language_directive=lang_directive,
             console=console,
         )
         write_registry_exports(package_dir, registry)
@@ -141,6 +143,7 @@ def main() -> int:
                 registry=registry,
                 struct_registry=struct_registry,
                 llm=llm,
+                language_directive=lang_directive,
                 console=console,
             )
         )

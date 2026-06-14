@@ -9,6 +9,7 @@ RECONSTRUCTION_MODEL: "glm-5.1"
 # General pipeline settings.
 LLM_TIMEOUT_SECONDS: 600
 CONTEXT: "dhcp_server"  # contexts/<name>.yaml
+OUTPUT_LANGUAGE: "en"  # en | zh — language of model prose (evidence, summaries); code stays English
 CODEQL_EXE: "D:\\tools\\codeql\\codeql.exe"
 
 # Used to fetch the raw package from Ghidra (main.py re-fetches on every run).

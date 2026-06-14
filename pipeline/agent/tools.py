@@ -6,8 +6,9 @@ from typing import Any
 
 from anthropic import beta_tool
 
+from pipeline.agent.flows import format_flows
 from pipeline.agent.graph import CallGraph
-from pipeline.paths import STUB_HEADER_FILENAME
+from pipeline.paths import TYPES_HEADER_FILENAME
 from pipeline.registry import NamingRegistry, StructRegistry
 
 
@@ -16,6 +17,7 @@ class ReviewSession:
     graph: CallGraph
     registry: NamingRegistry
     struct_registry: StructRegistry
+    flows: dict[str, Any] = field(default_factory=dict)
     changes: list[dict[str, Any]] = field(default_factory=list)
     read_addrs: set[str] = field(default_factory=set)
 
@@ -61,10 +63,24 @@ def build_tools(session: ReviewSession) -> list:
     graph = session.graph
 
     @beta_tool
+    def get_flows() -> str:
+        """List the source->sink chains to restore (from flows.json), ranked high/low.
+
+        These are your primary targets. Each entry: a sink (command-exec = high,
+        memory-write = low), the shortest call-graph route that reaches it, and a status.
+        status=root means the sink's function has no resolved caller — verify whether it is
+        the program entry or reached via an unseen (function-pointer) edge before acting.
+        """
+        if not session.flows.get("sinks"):
+            return "(no sinks detected)"
+        return format_flows(session.flows)
+
+    @beta_tool
     def list_functions() -> str:
         """List every function: address, current name, callee count, residual placeholders.
 
-        Call this first to build a global picture, then decide which functions to inspect.
+        Use it for global context (placeholders, duplicate names); the chains from get_flows
+        are the primary targets.
         """
         lines = ["addr | name | callees | placeholders"]
         for addr in sorted(graph.nodes):
@@ -199,7 +215,7 @@ def build_tools(session: ReviewSession) -> list:
 
         Use only when you are sure the result is semantically equivalent and clearly more
         readable/analyzable; prefer edit_function for small fixes. Do not change the signature.
-        The CodeQL stub include is preserved automatically; you need not write #include.
+        The recopilot_types.h include is preserved automatically; you need not write #include.
 
         Args:
             address: target function address.
@@ -213,7 +229,7 @@ def build_tools(session: ReviewSession) -> list:
         node, err = session._node_or_error(address)
         if err:
             return err
-        include = f'#include "{STUB_HEADER_FILENAME}"'
+        include = f'#include "{TYPES_HEADER_FILENAME}"'
         body = new_code if include in new_code else f"{include}\n\n{new_code.lstrip()}"
         if not body.endswith("\n"):
             body += "\n"
@@ -305,6 +321,7 @@ def build_tools(session: ReviewSession) -> list:
         return f"struct {old_name} {verb} struct {new_name}: {occurrences} code occurrences across {files} files."
 
     return [
+        get_flows,
         list_functions,
         read_function,
         get_callers,

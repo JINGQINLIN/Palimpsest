@@ -42,6 +42,29 @@ typedef unsigned long long uint64_t;
 typedef unsigned long long size_t;
 typedef long long ssize_t;
 typedef int pid_t;
+/* Common libc typedefs. Under --build-mode=none an undeclared typedef name
+   makes the parser unable to tell type from variable, so the whole statement
+   (and any call inside it) is silently dropped. Declare them all here; the db
+   is built as C++, so do NOT add bool/true/false/wchar_t (those are keywords). */
+typedef unsigned long uintptr_t;
+typedef long intptr_t;
+typedef long ptrdiff_t;
+typedef unsigned int socklen_t;
+typedef unsigned int in_addr_t;
+typedef unsigned short in_port_t;
+typedef unsigned short sa_family_t;
+typedef long time_t;
+typedef long clock_t;
+typedef long suseconds_t;
+typedef unsigned int useconds_t;
+typedef long off_t;
+typedef unsigned int mode_t;
+typedef unsigned int uid_t;
+typedef unsigned int gid_t;
+typedef unsigned long nfds_t;
+typedef long long intmax_t;
+typedef unsigned long long uintmax_t;
+typedef void (*__sighandler_t)(int);
 
 typedef struct {
     ulonglong lo;
@@ -68,8 +91,22 @@ int execve(const char *pathname, char *const argv[], char *const envp[]);
 int execle(const char *path, const char *arg, ...);
 int execl(const char *path, const char *arg, ...);
 int execlp(const char *file, const char *arg, ...);
-void *popen(const char *command, const char *type);
 pid_t fork(void);
+
+/* stdio FILE API — without the FILE typedef, `FILE *x = fopen/popen(...)`
+   fails to parse under --build-mode=none and the call (a taint source/sink) is
+   silently dropped from the database. */
+typedef struct _IO_FILE FILE;
+FILE *fopen(const char *pathname, const char *mode);
+FILE *popen(const char *command, const char *type);
+int pclose(FILE *stream);
+int fclose(FILE *stream);
+int fgetc(FILE *stream);
+char *fgets(char *s, int size, FILE *stream);
+size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
+int fputs(const char *s, FILE *stream);
+int fprintf(FILE *stream, const char *format, ...);
 
 int sprintf(char *str, const char *format, ...);
 int snprintf(char *str, size_t size, const char *format, ...);

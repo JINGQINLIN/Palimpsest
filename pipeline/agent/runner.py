@@ -6,6 +6,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from pipeline.agent.flows import build_flows, format_flows, write_flows
 from pipeline.agent.graph import CallGraph
 from pipeline.agent.tools import ReviewSession, build_tools
 from pipeline.console import print_item, print_step
@@ -19,15 +20,19 @@ _MAX_TOKENS = 8192
 _MAX_ITERATIONS = 1000
 _REVIEW_LOG = "agent_review.json"
 _KICKOFF = (
-    "Start the consistency review in two phases. "
-    "Phase A — bottom-up sweep: build the global picture with list_functions + "
-    "get_registry + get_structs, then fix residual placeholders, struct-pointer call-site "
-    "alignment, signature/argument mismatches, and naming duplicates. "
-    "Phase B — top-down walk: from the entry functions listed in the context, follow "
-    "get_callees + read_function down the call graph (≤ 4 levels per entry) to verify "
-    "parent→child semantic consistency. "
-    "Gather evidence before editing. When done, summarize what you changed by category and "
-    "which suspicious points you left unchanged for lack of evidence."
+    "Call get_flows first: it lists the source->sink chains (ranked high/low) that are your "
+    "primary targets. Your job is to restore these chains end to end so downstream taint "
+    "analysis works — restoring them well is worth more than touching the rest of the code. "
+    "For each chain, high severity first, walk it from the sink up the path and at every "
+    "caller->callee edge check three things: the data object keeps its type (no struct* "
+    "flattened to int), buffers are sized to what is actually written into them, and each "
+    "argument's role matches the parameter name. Resolve any residual placeholder or duplicate "
+    "name that breaks an edge ON a chain. For a status=root sink that is not the program entry, "
+    "find who dispatches it (often a function-pointer table) and verify before recording the "
+    "edge — do not invent one. For a command sink whose arguments are all string literals, note "
+    "it is not attacker-controlled and move on. Gather evidence before editing; off-chain "
+    "functions only need to stay parseable. Finish with a per-chain summary: what you fixed and "
+    "what you could not verify."
 )
 
 
@@ -39,7 +44,8 @@ def _build_context(graph: CallGraph, struct_registry: StructRegistry) -> str:
         unresolved_total += len(node.placeholders)
         ph = ",".join(sorted(node.placeholders)) if node.placeholders else "-"
         lines.append(f"0x{addr} | {node.name} | {ph}")
-    lines.append(f"\nTotal residual placeholder symbols: {unresolved_total}. Handle these functions first.")
+    lines.append(f"\nTotal residual placeholder symbols: {unresolved_total}. "
+                 "A placeholder on a chain path breaks a taint edge — prioritize those.")
 
     structs = struct_registry.get_all()
     if structs:
@@ -55,12 +61,6 @@ def _build_context(graph: CallGraph, struct_registry: StructRegistry) -> str:
             "header, so do not rename struct fields with rename_symbol."
         )
 
-    entries = graph.entries()
-    if entries:
-        lines.append(f"\n{len(entries)} entry functions (call-graph roots — Phase B starts here):")
-        for node in entries:
-            lines.append(f"0x{node.addr} | {node.name}")
-
     return "\n".join(lines)
 
 
@@ -74,12 +74,33 @@ def _write_review_log(package_dir: Path, session: ReviewSession, summary: str) -
     return log_path
 
 
+def _tool_line(block, graph: CallGraph) -> str:
+    inp = block.input or {}
+
+    def fn(addr: str) -> str:
+        node = graph.resolve(addr) if addr else None
+        return f"0x{node.addr} {node.name}" if node else (addr or "?")
+
+    name = block.name
+    if name in ("edit_function", "rewrite_function"):
+        verb = "edit" if name == "edit_function" else "rewrite"
+        return f"  [yellow]✎ {verb}[/yellow] {fn(inp.get('address', ''))}"
+    if name in ("rename_symbol", "rename_struct"):
+        verb = "rename" if name == "rename_symbol" else "struct"
+        return f"  [yellow]✎ {verb}[/yellow] {inp.get('old_name', '')} → {inp.get('new_name', '')}"
+    if name in ("read_function", "get_callers", "get_callees"):
+        verb = {"read_function": "read", "get_callers": "callers", "get_callees": "callees"}[name]
+        return f"  [dim]· {verb} {fn(inp.get('address', ''))}[/dim]"
+    return f"  [dim]· {name.replace('_', ' ')}[/dim]"
+
+
 def run_agent_review(
     *,
     package_dir: Path,
     registry: NamingRegistry,
     struct_registry: StructRegistry,
     llm: LLMClient,
+    language_directive: str = "",
     console: Console,
 ) -> TokenUsage:
     print_step(console, "4. Agent review")
@@ -91,17 +112,24 @@ def run_agent_review(
         return usage
 
     graph = CallGraph(codeql_dir)
+    flows = build_flows(graph)
+    write_flows(package_dir, flows)
     print_item(console, "functions", len(graph.nodes))
+    print_item(console, "sinks", f"{flows['summary']['sinks']} ({flows['summary']['high']} high)")
     print_item(console, "model", llm.model)
 
-    session = ReviewSession(graph=graph, registry=registry, struct_registry=struct_registry)
+    session = ReviewSession(
+        graph=graph, registry=registry, struct_registry=struct_registry, flows=flows
+    )
 
+    context = _build_context(graph, struct_registry) + "\n\n" + format_flows(flows)
     system = [
         {"type": "text", "text": _PLAYBOOK},
         {"type": "text", "text": _CODEQL_GUIDE},
-        {"type": "text", "text": _build_context(graph, struct_registry), "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": context, "cache_control": {"type": "ephemeral"}},
     ]
-    messages = [{"role": "user", "content": _KICKOFF}]
+    kickoff = _KICKOFF + ("\n\n" + language_directive if language_directive else "")
+    messages = [{"role": "user", "content": kickoff}]
 
     final_text = ""
     last_stop = None
@@ -123,14 +151,13 @@ def run_agent_review(
                 for block in message.content:
                     if block.type == "tool_use":
                         calls += 1
-                        arg = block.input.get("address") or block.input.get("old_name") or ""
                         status.update(
-                            f"[dim]tool[/dim] {block.name} {arg}".rstrip()
-                            + f"  ·  calls {calls} · changes {len(session.changes)}"
+                            f"{_tool_line(block, graph).strip()}"
+                            f"  ·  calls {calls} · changes {len(session.changes)}"
                         )
                     elif block.type == "text" and block.text.strip():
                         texts.append(block.text.strip())
-                if last_stop == "end_turn" and texts:
+                if texts and last_stop == "end_turn":
                     final_text = "\n".join(texts)
     except Exception as exc:
         console.print(f"  [red]agent review failed:[/red] {exc}")

@@ -83,7 +83,6 @@ def _format_known_structs(structs: dict[str, dict]) -> str:
 
 
 def _parse_structure_output(text: str) -> tuple[str, list[dict[str, Any]], str]:
-    # Prefer <structured> over <skip> when both appear.
     structured = _strip_fence(_extract_block(text, "structured"))
     if not structured:
         skip_reason = _extract_block(text, "skip")
@@ -205,6 +204,7 @@ def process_function(
     llm: LLMClient,
     structure_context: str,
     naming_context: str,
+    language_directive: str = "",
 ) -> dict:
     prompts = PromptManager()
     usage = TokenUsage()
@@ -216,6 +216,7 @@ def process_function(
         domain_context=structure_context,
         raw_decompile=raw_decompile,
         known_structs=_format_known_structs(struct_registry.get_all()),
+        language_directive=language_directive,
     )
     structure_text, step_usage = llm.complete(structure_prompt, max_tokens=_MAX_TOKENS)
     usage.merge(step_usage)
@@ -235,6 +236,7 @@ def process_function(
         structured_code=structured,
         known_symbols=_format_known_symbols(known_symbols),
         unknown_symbols=", ".join(unknown_symbols) if unknown_symbols else "(none)",
+        language_directive=language_directive,
     )
     naming_text, step_usage = llm.complete(naming_prompt, max_tokens=_MAX_TOKENS)
     usage.merge(step_usage)
@@ -264,6 +266,7 @@ def reconstruct_function(
     llm: LLMClient,
     structure_context: str,
     naming_context: str,
+    language_directive: str = "",
 ) -> dict:
     known_symbols, unknown_symbols = prefetch(ctx.code, registry)
     artifacts = process_function(
@@ -278,6 +281,7 @@ def reconstruct_function(
         llm=llm,
         structure_context=structure_context,
         naming_context=naming_context,
+        language_directive=language_directive,
     )
     if not artifacts.get("skipped"):
         func_dir = package_dir / FUNCTIONS_SUBDIR / f"0x{ctx.address}"
@@ -295,6 +299,7 @@ def run_reconstruction(
     llm: LLMClient,
     structure_context: str,
     naming_context: str,
+    language_directive: str = "",
     console: Console,
 ) -> tuple[TokenUsage, list[tuple[str, str]], list[tuple[str, str, str]]]:
     plan = topo_plan(contexts)
@@ -328,6 +333,7 @@ def run_reconstruction(
                     llm=llm,
                     structure_context=structure_context,
                     naming_context=naming_context,
+                    language_directive=language_directive,
                 )
                 total_usage.merge(artifacts.get("usage") or TokenUsage())
                 if artifacts.get("skipped"):

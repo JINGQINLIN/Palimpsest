@@ -42,6 +42,8 @@ def _field_decl(type_str: str, name: str) -> str:
     array = _ARRAY_RE.match(type_str)
     if array:
         return f"{array.group(1).strip()} {name}[{array.group(2)}]"
+    if type_str.endswith("[]"):
+        return f"{type_str[:-2].strip()} {name}[1]"
     return f"{type_str} {name}"
 
 
@@ -128,7 +130,6 @@ def render_types_header(structs: dict[str, dict]) -> str:
 
 
 def _write_header(codeql_dir: Path, filename: str, content: str) -> Path:
-    """Persist a rendered header to ``codeql_dir/filename`` and return the path."""
     codeql_dir.mkdir(parents=True, exist_ok=True)
     path = codeql_dir / filename
     path.write_text(content, encoding="utf-8")
@@ -140,14 +141,6 @@ def write_types_header(codeql_dir: Path, structs: dict[str, dict]) -> Path:
 
 
 def render_macros_header(entries: dict[str, dict]) -> str:
-    """Render ``#define`` directives for ``kind=constant`` registry entries.
-
-    Empty value rows are skipped — a macro without a value would be a syntax
-    error in C. Entries sharing a canonical_name are collapsed to a single
-    ``#define`` (first occurrence wins), so the header stays clean when
-    different functions independently propose the same macro under different
-    symbol keys. The output is sorted by canonical name for stable diffs.
-    """
     body = ["#ifndef RECOPILOT_MACROS_H", "#define RECOPILOT_MACROS_H", ""]
     constants = sorted(
         (e for e in entries.values() if e["kind"] == "constant" and e.get("value")),
@@ -174,12 +167,6 @@ def write_macros_header(codeql_dir: Path, entries: dict[str, dict]) -> Path:
 
 
 def render_globals_header(entries: dict[str, dict]) -> str:
-    """Render ``extern`` declarations for ``kind=global_var`` registry entries.
-
-    ``inferred_type`` is preserved verbatim when present; missing types fall
-    back to ``uint32_t`` with a trailing comment so downstream tools can flag
-    them for human review without breaking the parse.
-    """
     body = ["#ifndef RECOPILOT_GLOBALS_H", "#define RECOPILOT_GLOBALS_H", ""]
     globals_ = sorted(
         (e for e in entries.values() if e["kind"] == "global_var"),

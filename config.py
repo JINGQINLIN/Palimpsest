@@ -16,6 +16,7 @@ class PipelineConfig:
     codeql_exe: str
     llm_timeout_seconds: float = 600.0
     context: str = "dhcp_server"
+    language: str = "en"
     ghidra_install_dir: str = ""
     pyghidra_mcp_exe: str = "pyghidra-mcp"
 
@@ -53,6 +54,7 @@ def load_config(path: Path = CONFIG_FILE) -> PipelineConfig:
         codeql_exe=str(codeql_exe),
         llm_timeout_seconds=float(data.get("LLM_TIMEOUT_SECONDS") or 600),
         context=str(data.get("CONTEXT") or "dhcp_server").strip(),
+        language=str(data.get("OUTPUT_LANGUAGE") or "en").strip().lower(),
         ghidra_install_dir=str(data.get("GHIDRA_INSTALL_DIR") or ""),
         pyghidra_mcp_exe=str(data.get("PYGHIDRA_MCP_EXE") or "") or "pyghidra-mcp",
     )

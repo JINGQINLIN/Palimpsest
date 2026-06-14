@@ -1,5 +1,3 @@
-"""Post-process pipeline output: summaries and firmware report."""
-
 from __future__ import annotations
 
 import argparse
