@@ -39,3 +39,10 @@ legacy_*.json
 samples/r9000_*
 samples/netgear_r9000/
 
+# benchmark 运行产物（可用 benchmark.tools.* 重新生成）
+benchmark/cases/*/pred/
+benchmark/cases/*/scores/
+benchmark/cases/*/alignment.json
+benchmark/cases/*/anchors.json
+benchmark/cases/*/propagation.json
+

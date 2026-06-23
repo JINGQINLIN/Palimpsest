@@ -1,0 +1,8 @@
+id: udhcpd_dir895
+binary: samples/udhcpd_dir895.bin
+package_name: udhcpd_dir895
+
+# Set to your open-source udhcpd tree before running build_gold.
+source_root: ""
+
+context: dhcp_server
