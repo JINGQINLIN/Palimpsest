@@ -37,6 +37,7 @@ _KICKOFF = (
 
 
 def _build_context(graph: CallGraph, struct_registry: StructRegistry) -> str:
+    """Function index + struct layouts for the agent system prompt."""
     lines = [f"{len(graph.nodes)} functions in the code set. Index (addr | name | residual placeholders):"]
     unresolved_total = 0
     for addr in sorted(graph.nodes):
@@ -62,6 +63,15 @@ def _build_context(graph: CallGraph, struct_registry: StructRegistry) -> str:
         )
 
     return "\n".join(lines)
+
+
+def _agent_system_context(
+    graph: CallGraph,
+    struct_registry: StructRegistry,
+    flows: dict,
+) -> str:
+    """Cached system context: function index, structs, and ranked sink chains."""
+    return _build_context(graph, struct_registry) + "\n\n" + format_flows(flows)
 
 
 def _write_review_log(package_dir: Path, session: ReviewSession, summary: str) -> Path:
@@ -122,7 +132,7 @@ def run_agent_review(
         graph=graph, registry=registry, struct_registry=struct_registry, flows=flows
     )
 
-    context = _build_context(graph, struct_registry) + "\n\n" + format_flows(flows)
+    context = _agent_system_context(graph, struct_registry, flows)
     system = [
         {"type": "text", "text": _PLAYBOOK},
         {"type": "text", "text": _CODEQL_GUIDE},

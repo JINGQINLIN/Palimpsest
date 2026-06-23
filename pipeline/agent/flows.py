@@ -1,3 +1,12 @@
+"""Build ranked source→sink chains to focus agent review.
+
+Before the consistency-review agent runs, scan ``codeql/src`` for security sinks
+(command execution, memory writes), walk the static call graph upward, and emit a
+ranked task list (``reconstruction/flows.json``). The agent system prompt and
+``get_flows`` tool consume this list so effort concentrates on restoring taint
+paths instead of polishing unrelated functions.
+"""
+
 from __future__ import annotations
 
 import json
@@ -6,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pipeline.agent.graph import CallGraph
+
+# --- sink catalogs -----------------------------------------------------------
 
 COMMAND_EXEC = [
     "system", "___system", "popen", "execl", "execlp", "execle",
@@ -26,6 +37,8 @@ class Site:
     snippet: str
 
 
+# --- sink detection ----------------------------------------------------------
+
 def _scan(text: str, names: list[str]) -> list[tuple[str, int, str]]:
     pattern = re.compile(r"\b(" + "|".join(map(re.escape, names)) + r")\s*\(")
     hits: list[tuple[str, int, str]] = []
@@ -43,11 +56,6 @@ def _sink_sites(text: str) -> list[Site]:
     return sites
 
 
-def _site_dicts(sites: list[Site]) -> list[dict]:
-    return [{"category": s.category, "name": s.name, "line": s.line, "snippet": s.snippet}
-            for s in sites]
-
-
 def _sink_functions(graph: CallGraph) -> dict[str, list[Site]]:
     out: dict[str, list[Site]] = {}
     for addr, node in graph.nodes.items():
@@ -56,6 +64,8 @@ def _sink_functions(graph: CallGraph) -> dict[str, list[Site]]:
             out[addr] = sites
     return out
 
+
+# --- call-graph path search --------------------------------------------------
 
 def _paths_to_roots(graph: CallGraph, sink_addr: str, max_depth: int) -> list[list[str]]:
     paths: list[list[str]] = []
@@ -83,7 +93,10 @@ def _dedup(paths: list[list[str]]) -> list[list[str]]:
     return uniq
 
 
+# --- public API --------------------------------------------------------------
+
 def build_flows(graph: CallGraph) -> dict:
+    """Return {summary, sinks} for every sink function in the call graph."""
     sink_funcs = _sink_functions(graph)
     records: list[dict] = []
 
@@ -108,7 +121,9 @@ def build_flows(graph: CallGraph) -> dict:
             "placeholders_on_path": placeholders,
         })
 
-    records.sort(key=lambda r: (r["severity"] != "high", r["status"] != "traced", r["sink"]["addr"]))
+    records.sort(
+        key=lambda r: (r["severity"] != "high", r["status"] != "traced", r["sink"]["addr"])
+    )
     for i, record in enumerate(records, 1):
         record["sink_id"] = i
 
@@ -122,7 +137,15 @@ def build_flows(graph: CallGraph) -> dict:
     return {"summary": summary, "sinks": records}
 
 
+def _site_dicts(sites: list[Site]) -> list[dict]:
+    return [
+        {"category": s.category, "name": s.name, "line": s.line, "snippet": s.snippet}
+        for s in sites
+    ]
+
+
 def format_flows(flows: dict) -> str:
+    """Human-readable chain list for the agent system prompt / get_flows."""
     s = flows["summary"]
     lines = [
         f"{s['sinks']} sinks reachable in the code set "
@@ -135,12 +158,16 @@ def format_flows(flows: dict) -> str:
         extra = f" (+{r['path_count'] - 1} more routes)" if r["path_count"] > 1 else ""
         note = ""
         if r["status"] == "root":
-            note += (" [root: no resolved caller — if not the program entry, it is reached via "
-                     "an unseen edge (function-pointer dispatch) or is dead; investigate]")
+            note += (
+                " [root: no resolved caller — if not the program entry, it is reached via "
+                "an unseen edge (function-pointer dispatch) or is dead; investigate]"
+            )
         if r["confidence"] == "inferred":
             note += " [inferred: path still carries placeholders]"
-        lines.append(f"#{r['sink_id']} [{r['severity']}] {names} in {r['sink']['name']}"
-                     f"  <=  {path}{extra}{note}")
+        lines.append(
+            f"#{r['sink_id']} [{r['severity']}] {names} in {r['sink']['name']}"
+            f"  <=  {path}{extra}{note}"
+        )
     return "\n".join(lines)
 
 
