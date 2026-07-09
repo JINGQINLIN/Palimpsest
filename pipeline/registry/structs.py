@@ -15,8 +15,9 @@ import json
 import re
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Optional
+
+from pipeline.registry.store import SqliteStore
 
 _IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 
@@ -45,7 +46,7 @@ def normalize_fields(raw: Any) -> list[dict]:
     return [by_offset[off] for off in sorted(by_offset)]
 
 
-class StructRegistry:
+class StructRegistry(SqliteStore):
     _DDL = """
     CREATE TABLE IF NOT EXISTS structs (
         name        TEXT PRIMARY KEY,
@@ -57,14 +58,6 @@ class StructRegistry:
         updated_at  TEXT NOT NULL
     )
     """
-
-    def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.db_path))
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute(self._DDL)
-        self._conn.commit()
 
     def update(
         self,
@@ -115,6 +108,3 @@ class StructRegistry:
         data = dict(row)
         data["fields"] = json.loads(data["fields"])
         return data
-
-    def close(self) -> None:
-        self._conn.close()

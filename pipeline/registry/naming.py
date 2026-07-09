@@ -12,16 +12,16 @@ into the prompt as a known symbol) rather than re-proposing it.
 from __future__ import annotations
 
 import re
-import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
+
+from pipeline.registry.store import SqliteStore
 
 VALID_KINDS = ("function", "global_var", "constant")
 PLACEHOLDER_RE = re.compile(r"\b(?:FUN|DAT|LAB|sub|byte|word|dword|qword)_[0-9a-fA-F]+\b")
 
 
-class NamingRegistry:
+class NamingRegistry(SqliteStore):
     _DDL = """
     CREATE TABLE IF NOT EXISTS symbols (
         symbol         TEXT PRIMARY KEY,
@@ -35,14 +35,6 @@ class NamingRegistry:
         updated_at     TEXT NOT NULL
     )
     """
-
-    def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.db_path))
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute(self._DDL)
-        self._conn.commit()
 
     def update(
         self,
@@ -91,6 +83,3 @@ class NamingRegistry:
                 (kind,),
             ).fetchall()
         return {row["symbol"]: dict(row) for row in rows}
-
-    def close(self) -> None:
-        self._conn.close()

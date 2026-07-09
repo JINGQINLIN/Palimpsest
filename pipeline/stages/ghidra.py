@@ -146,6 +146,44 @@ async def _list_functions(session, binary: str) -> list[dict]:
     return functions
 
 
+async def _decompile_all(
+    session, binary: str, functions: list[dict], output_dir: Path
+) -> tuple[int, list[tuple[str, str]]]:
+    """Decompile every function and write it as <addr>.json / 逐函数反编译并落盘。
+
+    Returns (ok_count, failed) where failed is a list of (address, error).
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ok = 0
+    failed: list[tuple[str, str]] = []
+
+    with make_progress(console) as progress:
+        task = progress.add_task("fetching...", total=len(functions))
+        for func in functions:
+            addr = func["address"]
+            progress.update(task, description=f"0x{addr}  {func['name']}")
+            try:
+                # Ghidra 期望不补零的十六进制地址（如 0xa14c）
+                ghidra_addr = "0x" + (addr.lstrip("0") or "0")
+                data = await _call(
+                    session,
+                    "decompile_function",
+                    binary_name=binary,
+                    name_or_address=ghidra_addr,
+                )
+                code = _normalize_code(data.get("code") or "")
+                if code:
+                    ctx = FunctionContext(address=addr, ghidra_name=func["name"], code=code)
+                    (output_dir / f"{addr}.json").write_text(ctx.to_json(), encoding="utf-8")
+                    ok += 1
+            except Exception as exc:
+                failed.append((addr, str(exc)))
+                console.print(f"  [red]failed[/red] 0x{addr}: {exc}")
+            progress.advance(task)
+
+    return ok, failed
+
+
 async def fetch(binary_path: Path, output_dir: Path, ghidra_dir: str, mcp_exe: str) -> int:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -175,32 +213,7 @@ async def fetch(binary_path: Path, output_dir: Path, ghidra_dir: str, mcp_exe: s
             functions = await _list_functions(session, binary)
             print_item(console, "functions", len(functions))
 
-            output_dir.mkdir(parents=True, exist_ok=True)
-            ok = 0
-            failed = []
-
-            with make_progress(console) as progress:
-                task = progress.add_task("fetching...", total=len(functions))
-                for func in functions:
-                    addr = func["address"]
-                    progress.update(task, description=f"0x{addr}  {func['name']}")
-                    try:
-                        ghidra_addr = "0x" + (addr.lstrip("0") or "0")
-                        data = await _call(
-                            session,
-                            "decompile_function",
-                            binary_name=binary,
-                            name_or_address=ghidra_addr,
-                        )
-                        code = _normalize_code(data.get("code") or "")
-                        if code:
-                            ctx = FunctionContext(address=addr, ghidra_name=func["name"], code=code)
-                            (output_dir / f"{addr}.json").write_text(ctx.to_json(), encoding="utf-8")
-                            ok += 1
-                    except Exception as exc:
-                        failed.append((addr, str(exc)))
-                        console.print(f"  [red]failed[/red] 0x{addr}: {exc}")
-                    progress.advance(task)
+            ok, failed = await _decompile_all(session, binary, functions, output_dir)
 
     print_step(console, "[green]Ghidra fetch done[/green]")
     print_item(console, "functions", f"{ok} ok, {len(failed)} failed")

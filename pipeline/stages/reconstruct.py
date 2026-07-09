@@ -203,24 +203,23 @@ def _apply_registry_updates(
     return applied
 
 
-def process_function(
+def _run_structure_phase(
     *,
+    prompts: PromptManager,
+    llm: LLMClient,
+    usage: TokenUsage,
     binary_name: str,
     address: int,
-    ghidra_name: str,
-    raw_decompile: str,
-    known_symbols: dict[str, dict],
-    unknown_symbols: list[str],
-    registry: NamingRegistry,
-    struct_registry: StructRegistry,
-    llm: LLMClient,
     structure_context: str,
-    naming_context: str,
-    language_directive: str = "",
-) -> dict:
-    prompts = PromptManager()
-    usage = TokenUsage()
+    raw_decompile: str,
+    struct_registry: StructRegistry,
+    language_directive: str,
+) -> tuple[str, list[dict[str, Any]], str]:
+    """Structure pass / 结构恢复阶段：恢复控制流并推断结构体布局。
 
+    Returns (structured_code, applied_structs, skip_reason). A non-empty
+    skip_reason means the LLM marked the function as trivial/skippable.
+    """
     structure_prompt = prompts.load(
         "structure.jinja2",
         binary_name=binary_name,
@@ -234,12 +233,34 @@ def process_function(
     usage.merge(step_usage)
     structured, struct_updates, skip_reason = _parse_structure_output(structure_text)
     if skip_reason:
-        return {"skipped": True, "skip_reason": skip_reason, "usage": usage}
+        return "", [], skip_reason
     if not structured:
         raise ValueError("LLM structure step returned empty output")
     applied_structs = _apply_struct_updates(struct_registry, struct_updates, source_file=binary_name)
     # TODO(P3): 插入 P-Code 验证层，交叉验证 LLM 推断的 struct 布局
+    return structured, applied_structs, ""
 
+
+def _run_naming_phase(
+    *,
+    prompts: PromptManager,
+    llm: LLMClient,
+    usage: TokenUsage,
+    binary_name: str,
+    address: int,
+    ghidra_name: str,
+    naming_context: str,
+    structured: str,
+    known_symbols: dict[str, dict],
+    unknown_symbols: list[str],
+    registry: NamingRegistry,
+    language_directive: str,
+) -> tuple[str, str, list[dict[str, Any]]]:
+    """Naming pass / 命名阶段：为符号分配规范名。
+
+    Returns (named_code, naming_map, applied_updates). named_code falls back to
+    the structured code when the LLM returns nothing.
+    """
     naming_prompt = prompts.load(
         "naming.jinja2",
         binary_name=binary_name,
@@ -258,6 +279,56 @@ def process_function(
     # TODO(P4): naming 为空时的保守回退点——后续可在此触发裸偏移表示或重试增强
     named = named or structured
     applied = _apply_registry_updates(registry, updates, source_file=binary_name)
+    return named, naming_map, applied
+
+
+def process_function(
+    *,
+    binary_name: str,
+    address: int,
+    ghidra_name: str,
+    raw_decompile: str,
+    known_symbols: dict[str, dict],
+    unknown_symbols: list[str],
+    registry: NamingRegistry,
+    struct_registry: StructRegistry,
+    llm: LLMClient,
+    structure_context: str,
+    naming_context: str,
+    language_directive: str = "",
+) -> dict:
+    """Run the two LLM passes for one function / 对单个函数执行 structure + naming 两阶段。"""
+    prompts = PromptManager()
+    usage = TokenUsage()
+
+    structured, applied_structs, skip_reason = _run_structure_phase(
+        prompts=prompts,
+        llm=llm,
+        usage=usage,
+        binary_name=binary_name,
+        address=address,
+        structure_context=structure_context,
+        raw_decompile=raw_decompile,
+        struct_registry=struct_registry,
+        language_directive=language_directive,
+    )
+    if skip_reason:
+        return {"skipped": True, "skip_reason": skip_reason, "usage": usage}
+
+    named, naming_map, applied = _run_naming_phase(
+        prompts=prompts,
+        llm=llm,
+        usage=usage,
+        binary_name=binary_name,
+        address=address,
+        ghidra_name=ghidra_name,
+        naming_context=naming_context,
+        structured=structured,
+        known_symbols=known_symbols,
+        unknown_symbols=unknown_symbols,
+        registry=registry,
+        language_directive=language_directive,
+    )
 
     return {
         "raw": raw_decompile,
