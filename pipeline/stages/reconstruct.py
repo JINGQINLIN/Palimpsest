@@ -1,3 +1,14 @@
+"""LLM two-phase semantic reconstruction / LLM 两阶段语义重构。
+
+Per function, two LLM passes run in order:
+  1. structure — recover control flow and infer struct layouts.
+  2. naming    — assign canonical symbol names.
+Functions are processed leaf-first via topological order (see stages.order),
+so callee names are known before their callers are handled.
+
+按拓扑序（叶子优先）逐函数重构：先 structure 恢复控制流并推断结构体，
+后 naming 命名符号；结果写入 NamingRegistry / StructRegistry 与 functions 目录。
+"""
 from __future__ import annotations
 
 import json
@@ -21,6 +32,7 @@ from pipeline.registry import (
 )
 from pipeline.stages.ghidra import FunctionContext
 from pipeline.stages.order import topo_plan
+
 _FENCE_RE = re.compile(r"\A\s*```[a-zA-Z0-9_+-]*\s*\n(.*?)\n?```\s*\Z", re.DOTALL)
 _KNOWN_TAGS = ("structured", "struct_updates", "named", "naming_map", "registry_updates", "skip")
 _NEXT_TAG_RE = re.compile(r"<(?:" + "|".join(_KNOWN_TAGS) + r")>")
@@ -226,6 +238,7 @@ def process_function(
     if not structured:
         raise ValueError("LLM structure step returned empty output")
     applied_structs = _apply_struct_updates(struct_registry, struct_updates, source_file=binary_name)
+    # TODO(P3): 插入 P-Code 验证层，交叉验证 LLM 推断的 struct 布局
 
     naming_prompt = prompts.load(
         "naming.jinja2",
@@ -242,6 +255,7 @@ def process_function(
     usage.merge(step_usage)
 
     named, naming_map, updates = _parse_naming_output(naming_text)
+    # TODO(P4): naming 为空时的保守回退点——后续可在此触发裸偏移表示或重试增强
     named = named or structured
     applied = _apply_registry_updates(registry, updates, source_file=binary_name)
 

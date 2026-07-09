@@ -1,3 +1,14 @@
+"""Ghidra export stage / Ghidra 导出阶段。
+
+Drives pyghidra-mcp (Ghidra Headless) to decompile every function and dumps the
+raw pseudo-C as per-function JSON. By design it exports ONLY decompiled code,
+not the Data Type Manager: struct layouts are re-inferred later by the LLM
+(structure phase) instead of trusting Ghidra's often-incomplete type database.
+
+驱动 pyghidra-mcp 反编译全部函数并按函数导出原始伪 C（JSON）。设计上仅导出
+反编译代码、不导出 Data Type Manager——结构体布局改由 LLM structure 阶段推断，
+而非依赖 Ghidra 往往不完整的类型库。
+"""
 from __future__ import annotations
 
 import asyncio
@@ -133,6 +144,7 @@ async def _list_functions(session, binary: str) -> list[dict]:
         offset += page_size
 
     return functions
+
 
 async def fetch(binary_path: Path, output_dir: Path, ghidra_dir: str, mcp_exe: str) -> int:
     from mcp import ClientSession, StdioServerParameters

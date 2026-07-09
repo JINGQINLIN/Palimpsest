@@ -1,3 +1,12 @@
+"""CodeQL database builder / CodeQL 数据库构建。
+
+Applies the naming & struct registries to the reconstructed C sources, writes
+the generated headers (stubs/macros/globals/types), and builds a CodeQL C++
+database with --build-mode=none.
+
+将命名/结构体注册表应用到重构后的 C 源码，写出配套头文件（stubs/macros/
+globals/types），并以 --build-mode=none 建立 CodeQL 数据库。
+"""
 from __future__ import annotations
 
 import re
@@ -134,6 +143,9 @@ def create_codeql_database(*, package_dir: Path, codeql_exe: str, console: Conso
         "--language=cpp",
         "--source-root",
         str(codeql_dir),
+        # --build-mode=none 直接从源码建库、不做真实编译：无编译器语法校验，
+        # 解析失败的语句会被静默丢弃（局限详见 stubs.py 顶部说明）。
+        # TODO(P1): 收集编译器语法检查反馈以评估 IR 精度
         "--build-mode=none",
         "--overwrite",
     ]

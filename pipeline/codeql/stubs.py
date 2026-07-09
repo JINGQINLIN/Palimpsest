@@ -1,9 +1,20 @@
+"""CodeQL parser stub header / CodeQL 解析桩头文件。
+
+Provides libc/Ghidra typedefs, decompiler helper macros, and common API
+prototypes so --build-mode=none can parse the reconstructed C. A missing
+typedef makes the parser drop the whole statement (and any taint source/sink
+inside it), so declarations are kept deliberately broad.
+
+为 --build-mode=none 解析提供 libc/Ghidra 类型、译码器辅助宏与常用 API 原型。
+缺失类型定义会导致整条语句（含其中的污点源/汇）被静默丢弃，故此处刻意声明齐全。
+"""
 from __future__ import annotations
 
 from pathlib import Path
 
 from pipeline.paths import STUB_HEADER_FILENAME
 
+# TODO(P1): 补充 sys/select.h, netdb.h, sys/stat.h, signal.h, stdarg.h 等系统头文件类型定义
 
 STUB_HEADER = r"""#ifndef RECOPILOT_STUBS_H
 #define RECOPILOT_STUBS_H

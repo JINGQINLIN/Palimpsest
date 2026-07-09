@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Run CLARIS on a Palimpsest job output.
+在 Palimpsest 作业产物上运行 CLARIS：环境探测 → 预检 → 生成 config.json → 执行 → 汇总报告。
 
 Two conda environments are expected:
   - Palimpsest (semant_func): run this script here

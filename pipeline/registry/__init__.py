@@ -1,7 +1,4 @@
 from pipeline.registry.header import (
-    render_globals_header,
-    render_macros_header,
-    render_types_header,
     write_globals_header,
     write_macros_header,
     write_types_header,
@@ -15,9 +12,6 @@ __all__ = [
     "NamingRegistry",
     "StructRegistry",
     "normalize_fields",
-    "render_globals_header",
-    "render_macros_header",
-    "render_types_header",
     "write_globals_header",
     "write_macros_header",
     "write_types_header",

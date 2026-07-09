@@ -82,6 +82,8 @@ def _topo_order(structs: dict[str, dict]) -> list[str]:
 
 
 def _render_struct(name: str, entry: dict) -> str:
+    # Offset-anchored 渲染：按字段偏移逐个放置，字段间空隙用 _padN 填充以精确复现
+    # 内存布局；若偏移回退（字段重叠）则插入 WARNING 注释而非静默丢弃。
     fields = entry.get("fields") or []
     lines = [f"struct {name} {{"]
     cursor = 0

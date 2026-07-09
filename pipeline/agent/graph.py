@@ -74,12 +74,3 @@ class CallGraph:
             if callee_addr and callee_addr in self.nodes:
                 out.append(self.nodes[callee_addr])
         return out
-
-    def entries(self) -> list[FunctionNode]:
-        called: set[str] = set()
-        for node in self.nodes.values():
-            called.update(node.callees)
-        return sorted(
-            (node for node in self.nodes.values() if node.name not in called),
-            key=lambda n: n.addr,
-        )

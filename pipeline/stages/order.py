@@ -49,10 +49,6 @@ class TopoPlan:
     layers: list[list[str]]
     cycle: list[str]
 
-    @property
-    def order(self) -> list[str]:
-        return [addr for layer in self.layers for addr in layer] + self.cycle
-
     def summary(self) -> str:
         text = " ".join(f"d{i}:{len(layer)}" for i, layer in enumerate(self.layers))
         if self.cycle:
@@ -72,13 +68,16 @@ class TopoPlan:
 
 
 def topo_plan(contexts: dict[str, FunctionContext]) -> TopoPlan:
+    # Kahn 分层拓扑排序：叶子函数（不调用他人）在前，调用者在后 / leaf-first layering.
     callees = _build_callee_map(contexts)
 
+    # 反向边 callee -> callers，供出队时递减调用者的入度。
     callers: dict[str, list[str]] = defaultdict(list)
     for addr, targets in callees.items():
         for target in targets:
             callers[target].append(addr)
 
+    # pending = 每个函数尚未就绪的 callee 数（入度）；从入度为 0 的叶子起步。
     pending = {addr: len(targets) for addr, targets in callees.items()}
     layers: list[list[str]] = []
     current = sorted(addr for addr, count in pending.items() if count == 0)
@@ -89,10 +88,11 @@ def topo_plan(contexts: dict[str, FunctionContext]) -> TopoPlan:
         for addr in current:
             for caller in callers[addr]:
                 pending[caller] -= 1
-                if pending[caller] == 0:
+                if pending[caller] == 0:  # callee 全部就绪后，调用者进入下一层
                     next_layer.append(caller)
         current = sorted(next_layer)
 
+    # 未进入任何层的即处于调用环（递归/相互调用），单独收尾。
     placed = {addr for layer in layers for addr in layer}
     cycle = sorted(addr for addr in contexts if addr not in placed)
     return TopoPlan(layers=layers, cycle=cycle)
