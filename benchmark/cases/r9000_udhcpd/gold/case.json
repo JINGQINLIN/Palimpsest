@@ -1,8 +1,0 @@
-{
-  "id": "r9000_udhcpd",
-  "binary": "samples/r9000_udhcpd.bin",
-  "source_root": "samples/netgear_r9000/udhcpd",
-  "source_headers": "samples/netgear_r9000/udhcpd",
-  "context": "dhcp_server",
-  "package_name": "r9000_udhcpd"
-}

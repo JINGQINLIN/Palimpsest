@@ -1,1 +1,0 @@
-duplicate function name init_packet: clientpacket.c vs serverpacket.c

@@ -1,77 +1,25 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
 from rich.console import Console
 
-from pipeline.agent.flows import build_flows, format_flows, write_flows
+from pipeline.agent.catalog import FunctionCatalog
+from pipeline.agent.context import KICKOFF, build_system_blocks
 from pipeline.agent.graph import CallGraph
-from pipeline.agent.tools import ReviewSession, build_tools
+from pipeline.agent.session import ReviewSession
+from pipeline.agent.tools import build_tools
 from pipeline.console import print_item, print_step
 from pipeline.llm import LLMClient, TokenUsage
 from pipeline.paths import CODEQL_SUBDIR, REGISTRY_SUBDIR
 from pipeline.registry import NamingRegistry, StructRegistry, write_types_header
 
-_PLAYBOOK = (Path(__file__).parent / "playbook.md").read_text(encoding="utf-8")
-_CODEQL_GUIDE = (Path(__file__).parent / "codeql_guide.md").read_text(encoding="utf-8")
 _MAX_TOKENS = 8192
 _MAX_ITERATIONS = 1000
 _REVIEW_LOG = "agent_review.json"
-_KICKOFF = (
-    "Call get_flows first: it lists the source->sink chains (ranked high/low) that are your "
-    "primary targets. Your job is to restore these chains end to end so downstream taint "
-    "analysis works — restoring them well is worth more than touching the rest of the code. "
-    "For each chain, high severity first, walk it from the sink up the path and at every "
-    "caller->callee edge check three things: the data object keeps its type (no struct* "
-    "flattened to int), buffers are sized to what is actually written into them, and each "
-    "argument's role matches the parameter name. Resolve any residual placeholder or duplicate "
-    "name that breaks an edge ON a chain. For a status=root sink that is not the program entry, "
-    "find who dispatches it (often a function-pointer table) and verify before recording the "
-    "edge — do not invent one. For a command sink whose arguments are all string literals, note "
-    "it is not attacker-controlled and move on. Gather evidence before editing; off-chain "
-    "functions only need to stay parseable. Finish with a per-chain summary: what you fixed and "
-    "what you could not verify."
-)
-
-
-def _build_context(graph: CallGraph, struct_registry: StructRegistry) -> str:
-    """Function index + struct layouts for the agent system prompt."""
-    lines = [f"{len(graph.nodes)} functions in the code set. Index (addr | name | residual placeholders):"]
-    unresolved_total = 0
-    for addr in sorted(graph.nodes):
-        node = graph.nodes[addr]
-        unresolved_total += len(node.placeholders)
-        ph = ",".join(sorted(node.placeholders)) if node.placeholders else "-"
-        lines.append(f"0x{addr} | {node.name} | {ph}")
-    lines.append(f"\nTotal residual placeholder symbols: {unresolved_total}. "
-                 "A placeholder on a chain path breaks a taint edge — prioritize those.")
-
-    structs = struct_registry.get_all()
-    if structs:
-        lines.append(f"\n{len(structs)} reconstructed structs (defined in the shared header recopilot_types.h):")
-        for name, entry in sorted(structs.items()):
-            fields = "; ".join(
-                f"+0x{f['offset']:x} {f['name']} {f['type']}" for f in entry.get("fields", [])
-            )
-            lines.append(f"struct {name} (size 0x{entry.get('size', 0):x}): {fields}")
-        lines.append(
-            "The structure pass changed some signatures to struct pointers; their call sites "
-            "may not be aligned yet — check and fix. Field names are authoritative in the shared "
-            "header, so do not rename struct fields with rename_symbol."
-        )
-
-    return "\n".join(lines)
-
-
-def _agent_system_context(
-    graph: CallGraph,
-    struct_registry: StructRegistry,
-    flows: dict,
-) -> str:
-    """Cached system context: function index, structs, and ranked sink chains."""
-    return _build_context(graph, struct_registry) + "\n\n" + format_flows(flows)
 
 
 def _write_review_log(package_dir: Path, session: ReviewSession, summary: str) -> Path:
@@ -98,9 +46,9 @@ def _tool_line(block, graph: CallGraph) -> str:
     if name in ("rename_symbol", "rename_struct"):
         verb = "rename" if name == "rename_symbol" else "struct"
         return f"  [yellow]✎ {verb}[/yellow] {inp.get('old_name', '')} → {inp.get('new_name', '')}"
-    if name in ("read_function", "get_callers", "get_callees"):
-        verb = {"read_function": "read", "get_callers": "callers", "get_callees": "callees"}[name]
-        return f"  [dim]· {verb} {fn(inp.get('address', ''))}[/dim]"
+    if name in ("read_function", "get_callers", "get_callees", "get_function_info", "get_call_sites"):
+        label = name.replace("_", " ")
+        return f"  [dim]· {label} {fn(inp.get('address', ''))}[/dim]"
     return f"  [dim]· {name.replace('_', ' ')}[/dim]"
 
 
@@ -122,23 +70,23 @@ def run_agent_review(
         return usage
 
     graph = CallGraph(codeql_dir)
-    flows = build_flows(graph)
-    write_flows(package_dir, flows)
+    catalog = FunctionCatalog(graph, package_dir)
+    indirect = sum(len(i.indirect_sites) for i in catalog.all_infos())
+    placeholders = sum(len(i.placeholders) for i in catalog.all_infos())
     print_item(console, "functions", len(graph.nodes))
-    print_item(console, "sinks", f"{flows['summary']['sinks']} ({flows['summary']['high']} high)")
+    print_item(console, "placeholders", placeholders)
+    print_item(console, "indirect sites", indirect)
     print_item(console, "model", llm.model)
 
     session = ReviewSession(
-        graph=graph, registry=registry, struct_registry=struct_registry, flows=flows
+        graph=graph,
+        catalog=catalog,
+        registry=registry,
+        struct_registry=struct_registry,
     )
 
-    context = _agent_system_context(graph, struct_registry, flows)
-    system = [
-        {"type": "text", "text": _PLAYBOOK},
-        {"type": "text", "text": _CODEQL_GUIDE},
-        {"type": "text", "text": context, "cache_control": {"type": "ephemeral"}},
-    ]
-    kickoff = _KICKOFF + ("\n\n" + language_directive if language_directive else "")
+    system = build_system_blocks(graph, catalog, struct_registry)
+    kickoff = KICKOFF + ("\n\n" + language_directive if language_directive else "")
     messages = [{"role": "user", "content": kickoff}]
 
     final_text = ""

@@ -1,7 +1,0 @@
-id: r9000_udhcpd
-binary: samples/r9000_udhcpd.bin
-package_name: r9000_udhcpd
-
-source_root: samples/netgear_r9000/udhcpd
-
-context: dhcp_server

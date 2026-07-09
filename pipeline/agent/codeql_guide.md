@@ -21,18 +21,16 @@ libc/Linux/firmware declarations).
 
 ## Useful for queries
 
-- Keep real calls — do NOT inline or merge functions (that breaks call edges and interprocedural
-  taint).
-- Dangerous functions (strcpy/strcat/sprintf/memcpy/system/popen/execve) are stub-declared with
-  correct prototypes; don't re-declare them locally; pass the tainted buffer to the matching arg.
-- Never cut the visible source→sink path (sources: recv/recvfrom/read/getenv; sinks: above).
-- Keep array sizes, indices, and sizeof explicit for buffer-overflow queries.
-- Prefer struct field access over offset arithmetic (better field-sensitive taint). Align call
-  sites after struct-pointer signature changes (get_callers). To merge duplicate structs: confirm
-  matching offsets with get_structs, align field names with edit_function, then rename_struct.
-  Don't rename struct fields with rename_symbol (the header is authoritative).
+- Keep real calls — do NOT inline or merge functions (that breaks call edges).
+- libc and firmware APIs in `recopilot_stubs.h` are stub-declared with correct prototypes; don't
+  re-declare them locally.
+- Keep array sizes, indices, and sizeof explicit where buffers are used.
+- Prefer struct field access over offset arithmetic. Align call sites after struct-pointer
+  signature changes (get_callers). To merge duplicate structs: confirm matching offsets with
+  get_structs, align field names with edit_function, then rename_struct. Don't rename struct
+  fields with rename_symbol (the header is authoritative).
 
 ## Red lines
 
-No change to observable behavior or side-effect order; no inlining/merging; don't cut the
-source→sink path; keep it valid C. When unsure, leave it and note it.
+No change to observable behavior or side-effect order; no inlining/merging; keep it valid C.
+When unsure, leave it and note it.

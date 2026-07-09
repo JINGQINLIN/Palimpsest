@@ -1,45 +1,15 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 from typing import Any
 
 from anthropic import beta_tool
 
-from pipeline.agent.flows import format_flows
-from pipeline.agent.graph import CallGraph
+from pipeline.agent.session import ReviewSession
 from pipeline.paths import TYPES_HEADER_FILENAME
-from pipeline.registry import NamingRegistry, StructRegistry
-
-
-@dataclass
-class ReviewSession:
-    graph: CallGraph
-    registry: NamingRegistry
-    struct_registry: StructRegistry
-    flows: dict[str, Any] = field(default_factory=dict)
-    changes: list[dict[str, Any]] = field(default_factory=list)
-    read_addrs: set[str] = field(default_factory=set)
-
-    def _node_or_error(self, address: str):
-        node = self.graph.resolve(address)
-        if node is None:
-            known = ", ".join(sorted(self.graph.nodes)[:12])
-            return None, f"No function found for address {address!r}. Known examples: {known} ..."
-        return node, ""
 
 
 def _require(tool: str, args: list[tuple[str, str]]) -> str:
-    """Return a model-friendly error message if any required argument is empty.
-
-    Args:
-        tool: tool name, used in the error message.
-        args: ordered list of (arg_name, arg_value) pairs to validate.
-
-    Returns:
-        Empty string if every argument is non-empty; otherwise an error message
-        naming the first missing argument and listing all required argument names.
-    """
     for name, value in args:
         if not value:
             required = ", ".join(n for n, _ in args)
@@ -47,9 +17,9 @@ def _require(tool: str, args: list[tuple[str, str]]) -> str:
     return ""
 
 
-def _replace_across_files(graph: CallGraph, pattern: re.Pattern, replacement: str) -> tuple[int, int]:
+def _replace_across_files(session: ReviewSession, pattern: re.Pattern, replacement: str) -> tuple[int, int]:
     occurrences = files = 0
-    for node in graph.nodes.values():
+    for node in session.graph.nodes.values():
         text = node.path.read_text(encoding="utf-8", errors="ignore")
         new_text, n = pattern.subn(replacement, text)
         if n:
@@ -61,45 +31,78 @@ def _replace_across_files(graph: CallGraph, pattern: re.Pattern, replacement: st
 
 def build_tools(session: ReviewSession) -> list:
     graph = session.graph
+    catalog = session.catalog
+
+    # --- exploration ---------------------------------------------------------
 
     @beta_tool
-    def get_flows() -> str:
-        """List the source->sink chains to restore (from flows.json), ranked high/low.
+    def browse_functions(filter_name: str = "all", query: str = "") -> str:
+        """Browse the function catalog without loading full source.
 
-        These are your primary targets. Each entry: a sink (command-exec = high,
-        memory-write = low), the shortest call-graph route that reaches it, and a status.
-        status=root means the sink's function has no resolved caller — verify whether it is
-        the program entry or reached via an unseen (function-pointer) edge before acting.
+        Each row: addr | name | return type | params | caller/callee counts | flags.
+        flags: entry, ph:N (residual placeholders), indirect:N, no_callers.
+
+        Args:
+            filter_name: all | placeholders | entries | indirect | isolated
+            query: optional substring to match name, address, signature, or placeholder
         """
-        if not session.flows.get("sinks"):
-            return "(no sinks detected)"
-        return format_flows(session.flows)
+        infos = catalog.browse(filter_name=filter_name, query=query)
+        if not infos:
+            return f"(no functions match filter={filter_name!r} query={query!r})"
+        header = "addr | name | return | params | graph | flags"
+        return header + "\n" + "\n".join(catalog.format_row(i) for i in infos)
 
     @beta_tool
-    def list_functions() -> str:
-        """List every function: address, current name, callee count, residual placeholders.
+    def get_function_info(address: str = "") -> str:
+        """Metadata card for one function: signature, params, return, graph role,
+        placeholders, indirect call sites, body preview, naming_map excerpt.
 
-        Use it for global context (placeholders, duplicate names); the chains from get_flows
-        are the primary targets.
+        Use this to decide whether to read_function — especially for indirect dispatch
+        (no static callers) or functions containing (*...)( calls.
+
+        Args:
+            address: function address, e.g. "0xeb08".
         """
-        lines = ["addr | name | callees | placeholders"]
-        for addr in sorted(graph.nodes):
-            node = graph.nodes[addr]
-            ph = ",".join(sorted(node.placeholders)) if node.placeholders else "-"
-            lines.append(f"0x{addr} | {node.name} | {len(node.callees)} | {ph}")
+        if err := _require("get_function_info", [("address", address)]):
+            return err
+        node, err = session.node_or_error(address)
+        if err:
+            return err
+        info = catalog.get(address)
+        if info is None:
+            return f"No catalog entry for 0x{node.addr} ({node.name})."
+        return catalog.format_detail(info, node)
+
+    @beta_tool
+    def search_code(pattern: str = "") -> str:
+        """Search all function files for a substring (case-insensitive).
+
+        Useful for dispatch tables, handler arrays, shared global names, or FUN_* placeholders.
+
+        Args:
+            pattern: text to find, e.g. "handler_table" or "FUN_0000f550".
+        """
+        if err := _require("search_code", [("pattern", pattern)]):
+            return err
+        hits = catalog.search_code(pattern)
+        if not hits:
+            return f"Pattern {pattern!r} not found."
+        lines = ["addr | line | snippet"]
+        for addr, lineno, snippet in hits:
+            name = graph.nodes[addr].name
+            lines.append(f"0x{addr} {name} | L{lineno} | {snippet}")
         return "\n".join(lines)
 
     @beta_tool
     def read_function(address: str = "") -> str:
-        """Read a function's full C source. Reading the same function again returns a
-        short reminder instead of the full text (it is already in the conversation above).
+        """Read a function's full C source. Re-reading returns a short reminder.
 
         Args:
             address: function address, e.g. "0xeb08".
         """
         if err := _require("read_function", [("address", address)]):
             return err
-        node, err = session._node_or_error(address)
+        node, err = session.node_or_error(address)
         if err:
             return err
         if node.addr in session.read_addrs:
@@ -109,31 +112,35 @@ def build_tools(session: ReviewSession) -> list:
 
     @beta_tool
     def get_callers(address: str = "") -> str:
-        """List functions that call this one. Use it to check call sites against the definition.
+        """List functions with a direct static call to this one.
 
         Args:
-            address: address of the callee.
+            address: callee address.
         """
         if err := _require("get_callers", [("address", address)]):
             return err
-        node, err = session._node_or_error(address)
+        node, err = session.node_or_error(address)
         if err:
             return err
         callers = graph.callers(address)
         if not callers:
-            return f"No function calls {node.name} (0x{node.addr})."
+            return (
+                f"No static caller for {node.name} (0x{node.addr}). "
+                "Likely entry point or reached via function pointer — use get_function_info, "
+                "search_code, and read_function on candidates."
+            )
         return "\n".join(f"0x{c.addr} | {c.name}" for c in callers)
 
     @beta_tool
     def get_callees(address: str = "") -> str:
-        """List functions this one calls, split into resolved and placeholder.
+        """List direct callees: resolved functions and unresolved names/placeholders.
 
         Args:
             address: function address.
         """
         if err := _require("get_callees", [("address", address)]):
             return err
-        node, err = session._node_or_error(address)
+        node, err = session.node_or_error(address)
         if err:
             return err
         resolved = graph.callee_nodes(address)
@@ -144,8 +151,34 @@ def build_tools(session: ReviewSession) -> list:
         return "\n".join(lines) if lines else f"{node.name} calls no other known function."
 
     @beta_tool
+    def get_call_sites(address: str = "") -> str:
+        """Show direct call-site snippets from every static caller.
+
+        Compare argument types/counts against the callee signature.
+
+        Args:
+            address: callee address.
+        """
+        if err := _require("get_call_sites", [("address", address)]):
+            return err
+        node, err = session.node_or_error(address)
+        if err:
+            return err
+        hits = catalog.call_sites_for(address)
+        if not hits:
+            return (
+                f"No direct call sites for {node.name} (0x{node.addr}). "
+                "If invoked, the edge is likely indirect."
+            )
+        lines = [f"call sites for {node.name} (0x{node.addr}):"]
+        for caller_addr, lineno, snippet in hits:
+            caller = graph.nodes[caller_addr]
+            lines.append(f"  0x{caller_addr} {caller.name} L{lineno}: {snippet}")
+        return "\n".join(lines)
+
+    @beta_tool
     def get_registry() -> str:
-        """Read the cross-function symbol table: symbol -> canonical name, type, confidence, evidence."""
+        """Cross-function symbol table: placeholder -> canonical name, type, evidence."""
         entries = session.registry.get_all()
         if not entries:
             return "(registry empty)"
@@ -160,11 +193,7 @@ def build_tools(session: ReviewSession) -> list:
 
     @beta_tool
     def get_structs() -> str:
-        """Read reconstructed struct layouts (the authoritative definitions in recopilot_types.h).
-
-        The `struct NAME *` types and field accesses in the code are based on these layouts.
-        Field names are defined in the shared header; do not rename struct fields with rename_symbol.
-        """
+        """Reconstructed struct layouts from recopilot_types.h (field names are authoritative)."""
         structs = session.struct_registry.get_all()
         if not structs:
             return "(no reconstructed structs yet)"
@@ -176,15 +205,15 @@ def build_tools(session: ReviewSession) -> list:
             lines.append(f"struct {name} (size 0x{entry.get('size', 0):x}): {fields}")
         return "\n".join(lines)
 
+    # --- edits -----------------------------------------------------------------
+
     @beta_tool
     def edit_function(address: str = "", old_str: str = "", new_str: str = "") -> str:
-        """Exact string replace in one function file (local consistency fix).
-
-        old_str must occur exactly once in the file; otherwise add more context to make it unique.
+        """Exact string replace in one function file (must be unique).
 
         Args:
             address: target function address.
-            old_str: text to replace (must be unique).
+            old_str: text to replace.
             new_str: replacement text.
         """
         if err := _require(
@@ -192,41 +221,36 @@ def build_tools(session: ReviewSession) -> list:
             [("address", address), ("old_str", old_str), ("new_str", new_str)],
         ):
             return err
-        node, err = session._node_or_error(address)
+        node, err = session.node_or_error(address)
         if err:
             return err
         text = node.path.read_text(encoding="utf-8", errors="ignore")
         count = text.count(old_str)
         if count == 0:
-            return "old_str not found; nothing changed. read_function first to confirm the text."
+            return "old_str not found; use read_function or get_call_sites to confirm text."
         if count > 1:
-            return f"old_str occurs {count} times and is not unique. Add more context."
+            return f"old_str occurs {count} times; add more context."
         node.path.write_text(text.replace(old_str, new_str), encoding="utf-8")
         session.read_addrs.discard(node.addr)
         session.changes.append(
-            {"tool": "edit_function", "address": f"0x{node.addr}",
-             "old": old_str, "new": new_str}
+            {"tool": "edit_function", "address": f"0x{node.addr}", "old": old_str, "new": new_str}
         )
         return f"Edited 0x{node.addr} ({node.name})."
 
     @beta_tool
     def rewrite_function(address: str = "", new_code: str = "") -> str:
-        """Rewrite a whole function with new source (for larger structural improvements).
-
-        Use only when you are sure the result is semantically equivalent and clearly more
-        readable/analyzable; prefer edit_function for small fixes. Do not change the signature.
-        The recopilot_types.h include is preserved automatically; you need not write #include.
+        """Rewrite a whole function (semantically equivalent; prefer edit_function).
 
         Args:
             address: target function address.
-            new_code: the function's new full C source.
+            new_code: new full C source for the function.
         """
         if err := _require(
             "rewrite_function",
             [("address", address), ("new_code", new_code)],
         ):
             return err
-        node, err = session._node_or_error(address)
+        node, err = session.node_or_error(address)
         if err:
             return err
         include = f'#include "{TYPES_HEADER_FILENAME}"'
@@ -237,71 +261,54 @@ def build_tools(session: ReviewSession) -> list:
         node.path.write_text(body, encoding="utf-8")
         session.read_addrs.discard(node.addr)
         session.changes.append(
-            {"tool": "rewrite_function", "address": f"0x{node.addr}",
-             "old": old, "new": body}
+            {"tool": "rewrite_function", "address": f"0x{node.addr}", "old": old, "new": body}
         )
         return f"Rewrote 0x{node.addr} ({node.name})."
 
     @beta_tool
     def rename_symbol(old_name: str = "", new_name: str = "") -> str:
-        """Rename an identifier across the whole code set, on word boundaries (global naming fix).
-
-        Use it to unify one semantic entity to a single name everywhere.
+        """Rename an identifier across the whole code set (word boundaries).
 
         Args:
             old_name: existing identifier.
-            new_name: unified new identifier.
+            new_name: new identifier.
         """
-        if err := _require(
-            "rename_symbol",
-            [("old_name", old_name), ("new_name", new_name)],
-        ):
+        if err := _require("rename_symbol", [("old_name", old_name), ("new_name", new_name)]):
             return err
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             return f"new_name {new_name!r} is not a valid C identifier."
         pattern = re.compile(rf"\b{re.escape(old_name)}\b")
-        occurrences, files = _replace_across_files(graph, pattern, new_name)
+        occurrences, files = _replace_across_files(session, pattern, new_name)
         if occurrences == 0:
-            return f"Identifier {old_name!r} not found; nothing changed."
+            return f"Identifier {old_name!r} not found."
         session.changes.append(
             {"tool": "rename_symbol", "old": old_name, "new": new_name,
              "occurrences": occurrences, "files": files}
         )
-        return f"Renamed {old_name} -> {new_name}: {occurrences} occurrences across {files} files."
+        return f"Renamed {old_name} -> {new_name}: {occurrences} hits in {files} files."
 
     @beta_tool
     def rename_struct(old_name: str = "", new_name: str = "") -> str:
-        """Rename or merge a struct type (for dedup and better names).
-
-        - new_name does not exist -> pure rename.
-        - new_name already exists -> merge: drop old_name's layout, keep new_name's as authoritative.
-
-        Both replace every `struct old_name` with `struct new_name` across the .c files.
-        Before merging, confirm with get_structs that the offset layouts match; if field names
-        differ at the same offset, first use edit_function to change old_name's `->field`
-        accesses to new_name's field names, then merge.
+        """Rename or merge a struct type across all .c files.
 
         Args:
             old_name: existing struct name.
-            new_name: target struct name (a merge if it already exists).
+            new_name: target name (merge if it already exists).
         """
-        if err := _require(
-            "rename_struct",
-            [("old_name", old_name), ("new_name", new_name)],
-        ):
+        if err := _require("rename_struct", [("old_name", old_name), ("new_name", new_name)]):
             return err
         if not re.fullmatch(r"[A-Za-z_]\w*", new_name):
             return f"new_name {new_name!r} is not a valid C identifier."
-        registry = session.struct_registry
-        source = registry.lookup(old_name)
+        reg = session.struct_registry
+        source = reg.lookup(old_name)
         if source is None:
             return f"Struct {old_name!r} not found."
         if old_name == new_name:
             return "old_name equals new_name; nothing to do."
 
-        merging = registry.lookup(new_name) is not None
+        merging = reg.lookup(new_name) is not None
         if not merging:
-            registry.update(
+            reg.update(
                 name=new_name,
                 fields=source["fields"],
                 size=source.get("size", 0),
@@ -309,23 +316,25 @@ def build_tools(session: ReviewSession) -> list:
                 evidence=source.get("evidence", ""),
                 source_file=source.get("source_file", ""),
             )
-        registry.delete(old_name)
+        reg.delete(old_name)
 
         pattern = re.compile(rf"\bstruct\s+{re.escape(old_name)}\b")
-        occurrences, files = _replace_across_files(graph, pattern, f"struct {new_name}")
+        occurrences, files = _replace_across_files(session, pattern, f"struct {new_name}")
         verb = "merged into" if merging else "renamed to"
         session.changes.append(
             {"tool": "rename_struct", "old": old_name, "new": new_name,
              "merged": merging, "code_occurrences": occurrences, "files": files}
         )
-        return f"struct {old_name} {verb} struct {new_name}: {occurrences} code occurrences across {files} files."
+        return f"struct {old_name} {verb} struct {new_name}: {occurrences} hits in {files} files."
 
     return [
-        get_flows,
-        list_functions,
+        browse_functions,
+        get_function_info,
+        search_code,
         read_function,
         get_callers,
         get_callees,
+        get_call_sites,
         get_registry,
         get_structs,
         edit_function,

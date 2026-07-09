@@ -50,7 +50,7 @@ The responsibilities of each stage are as follows:
 | `Ghidra MCP` | Firmware binary or decompilation results | Function-level pseudocode | Extract decompiled code for subsequent processing |
 | `LLM-Structure` | Raw pseudocode | Structure-enhanced code | Recover control flow, function boundaries, and code organization |
 | `LLM-Naming` | Structure-enhanced code | Naming-enhanced code | Improve the naming of variables, functions, and key semantic objects |
-| `LLM-Agent` | Structure- and naming-enhanced code | Final enhanced code | Restore source→sink chains for taint analysis; fix cross-function consistency |
+| `LLM-Agent` | Structure- and naming-enhanced code | Final enhanced code | Cross-function consistency review; fix naming, types, and call-site alignment |
 | `CodeQL` | Collection of semantically enhanced code | CodeQL database | Support vulnerability tracing, semantic queries, and software composition analysis |
 
 ## Installation
@@ -178,7 +178,6 @@ output/<binary>/
       struct_registry.sqlite3              Cross-function structure layout table
       unresolved_symbols.txt               Placeholders still unresolved after the first two recovery layers
     agent_review.json                      Change records and summary from Agent review
-    flows.json                             Ranked sink call chains (Agent review targets)
   codeql/
     src/
       recopilot_stubs.h                    Header file for Ghidra pseudo-types, macros, and common API declarations
@@ -211,13 +210,16 @@ pipeline/
     stubs.py                  Emits the static content of recopilot_stubs.h
     builder.py                Step 3: source export; Step 5: database construction
   agent/
-    runner.py                 Step 4: tool_runner agent-review loop
-    flows.py                  Build ranked source→sink chains before review
-    tools.py                  Agent toolset
-    graph.py                  Builds a static call graph from source code
-    playbook.md               Agent task objectives and constraints
-    codeql_guide.md           Guidance for Agent review to produce CodeQL-friendly code
-benchmark/                    Pipeline output evaluation vs open-source gold (see benchmark/README.md)
+    runner.py                 Step 4: tool_runner review loop
+    catalog.py                Function metadata index (signature, indirect calls, …)
+    session.py                Review session state
+    context.py                System prompt assembly
+    tools.py                  Agent tools (browse, info, edit, rename, …)
+    graph.py                  Static call graph from source
+    playbook.md               Review methodology and constraints
+    codeql_guide.md           CodeQL-friendly code rules
+integration/
+  claris/orchestrate.py       Optional: run CLARIS on job output after Palimpsest
 scripts/                      Post-processing entry point (summarize + firmware report)
 queries/                      Example CodeQL queries
 contexts/                     RAG domain priors, such as dhcp_server.yaml, injected into prompts
@@ -274,7 +276,7 @@ CodeQL Database (已自动跳过编译建库)
 | `Ghidra MCP`    | 固件二进制或反编译结果 | 函数级伪代码  | 提取可供后续处理的反编译代码         |
 | `LLM-Structure` | 原始伪代码             | 结构增强代码  | 恢复控制流、函数边界和代码组织结构   |
 | `LLM-Naming`    | 结构增强代码           | 命名增强代码  | 改善变量、函数和关键语义对象命名     |
-| `LLM-Agent`     | 结构与命名增强代码     | 最终增强代码  | 优先恢复 source→sink 链，修复跨函数一致性 |
+| `LLM-Agent`     | 结构与命名增强代码     | 最终增强代码  | 跨函数一致性审查；修复命名、类型与调用点对齐 |
 | `CodeQL`        | 语义增强代码合集       | CodeQL 数据库 | 支持漏洞追踪、语义查询与软件成分分析 |
 
 ## 安装方法
@@ -402,7 +404,6 @@ output/<binary>/
       struct_registry.sqlite3              跨函数结构体布局表
       unresolved_symbols.txt               前两层还原仍未解析的占位符
     agent_review.json                      Agent review 的修改记录与总结
-    flows.json                             排序后的 sink 调用链（Agent 审查目标）
   codeql/
     src/
       recopilot_stubs.h                    Ghidra 伪类型 / 宏 / 常见 API 声明头文件
@@ -435,13 +436,16 @@ pipeline/
     stubs.py                  recopilot_stubs.h 静态内容释放
     builder.py                步骤 3: 导出源码 与 步骤 5: 建库
   agent/
-    runner.py                 步骤 4：tool_runner agent-review 循环
-    flows.py                  Agent 启动前构建 source→sink 链
-    tools.py                  agent 工具集
-    graph.py                  从源码静态构建调用图
-    playbook.md               agent 任务目标与约束
-    codeql_guide.md           用于指引 Agent review 出 CodeQL 友好代码
-benchmark/                    对比 pipeline 输出与开源源码 gold（见 benchmark/README.md）
+    runner.py                 步骤 4：tool_runner review 循环
+    catalog.py                函数元数据索引（签名、间接调用等）
+    session.py                Review 会话状态
+    context.py                系统提示组装
+    tools.py                  agent 工具（浏览、详情、编辑、重命名等）
+    graph.py                  从源码构建静态调用图
+    playbook.md               审查方法论与约束
+    codeql_guide.md           CodeQL 友好代码规则
+integration/
+  claris/orchestrate.py       可选：Palimpsest 完成后对 job 输出跑 CLARIS
 scripts/                      后处理入口（函数摘要 + 固件报告）
 queries/                      CodeQL 查询示例
 contexts/                     RAG 领域先验,如 dhcp_server.yaml，会被注入到 prompt 中
