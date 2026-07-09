@@ -36,6 +36,10 @@ DEFAULT_CLARIS_CONDA_ENV = "claris"
 DEFAULT_LLM_THREADS = 2
 
 
+# =========================================================================
+# 环境探测与通用工具 / Environment discovery & shared helpers
+# 定位 Git-grep、conda 环境、CLARIS Python 解释器，并构造子进程环境。
+# =========================================================================
 def find_git_usr_bin() -> Path | None:
     """Locate Git for Windows usr/bin (provides grep used by upstream_constraint)."""
     for candidate in (
@@ -188,6 +192,10 @@ def resolve_claris_launch(
     )
 
 
+# =========================================================================
+# 预检与依赖准备 / Preflight & dependency checks
+# 运行前校验 CLARIS 运行时、CodeQL CLI/包、查询文件、LLM 配置与作业输入。
+# =========================================================================
 def preflight_claris_runtime(launch: ClarisLaunch, claris_root: Path) -> None:
     check = _run_output(launch.command + ["-c", "import litellm"], cwd=claris_root)
     if check.returncode == 0:
@@ -333,6 +341,9 @@ def preflight(job_dir: Path) -> tuple[Path, Path]:
     return src.resolve(), db.resolve()
 
 
+# =========================================================================
+# 配置生成 / CLARIS config.json generation
+# =========================================================================
 def build_claris_config(
     job_dir: Path,
     src: Path,
@@ -344,7 +355,9 @@ def build_claris_config(
     upstream_constraint: bool | None = None,
 ) -> dict:
     if upstream_constraint is None:
-        # Decompiled Palimpsest output rarely matches CLARIS web/listener upstream rules.
+        # 默认开启上游约束校验（CLARIS Step 2.1）。已知问题：Palimpsest 反编译产物的
+        # 调用/字符串特征常不匹配 CLARIS 的 web/listener 上游规则，可能过滤掉真实源；
+        # 且该校验依赖 PATH 上的 Git-grep。可用 --skip-upstream-constraint 关闭。
         upstream_constraint = True
     claris_dir = job_dir / "claris"
     source_out = claris_dir / "output" / "source_agent"
@@ -418,6 +431,9 @@ def build_claris_config(
     }
 
 
+# =========================================================================
+# 报告与执行入口 / Reporting, CLI & execution
+# =========================================================================
 def write_report(
     job_dir: Path,
     *,
