@@ -16,6 +16,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from pipeline.c_source import first_function_name
 from pipeline.codeql.export_names import (
     apply_codeql_name,
     build_export_map,
@@ -51,6 +52,46 @@ def _write_unresolved_symbols(package_dir: Path, unresolved: dict[str, list[str]
         lines.append(func_dir)
         lines.extend(f"  {symbol}" for symbol in symbols)
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def sync_codeql_filenames(codeql_dir: Path, console: Console) -> list[tuple[str, str]]:
+    """Sync CodeQL source filenames to match the actual function name in file content.
+
+    After agent review may rename symbols (FUN_xxxx → meaningful_name) in file
+    content via rename_symbol, the filename tokens (derived from base_names at
+    export time) become stale. This ensures filename == content for every .c file.
+
+    Returns a list of (old_name, new_name) for each renamed file.
+    """
+    renamed: list[tuple[str, str]] = []
+    for src_file in sorted(codeql_dir.glob("0x*.c")):
+        text = src_file.read_text(encoding="utf-8")
+        name = first_function_name(text)
+        if name is None:
+            continue
+
+        stem = src_file.stem
+        parts = stem.split("_", 1)
+        if len(parts) != 2:
+            continue
+        addr_hex = parts[0]
+        old_token = parts[1]
+
+        if old_token == name:
+            continue
+
+        token = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")
+        new_path = src_file.parent / f"{addr_hex}_{token}.c"
+
+        if new_path.exists() and new_path != src_file:
+            new_path = src_file.parent / f"{addr_hex}_{token}_0x{addr_hex}.c"
+
+        src_file.rename(new_path)
+        renamed.append((src_file.name, new_path.name))
+
+    if renamed:
+        print_item(console, "sync filenames", f"{len(renamed)} files renamed after agent review")
+    return renamed
 
 
 def apply_registry_and_export_sources(
@@ -133,6 +174,8 @@ def create_codeql_database(*, package_dir: Path, codeql_exe: str, console: Conso
     if not any(codeql_dir.glob("*.c")):
         console.print(f"  [red]error:[/red] no .c files in {codeql_dir}")
         return False
+
+    sync_codeql_filenames(codeql_dir, console)
 
     cmd = [
         codeql_exe,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 FUNC_DEF_RE = re.compile(
-    r"(?m)^\s*([A-Za-z_][\w\s\*]*?)\s+([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*\{"
+    r"(?m)^\s*([A-Za-z_][\w\s\*]*?)\s+\*?\s*([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*\{"
 )
 INDIRECT_CALL_RE = re.compile(
     r"\(\s*\*[^)]*\)\s*\(|"  # (*fn)(args)
