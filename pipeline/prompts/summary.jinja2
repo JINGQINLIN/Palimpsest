@@ -1,0 +1,43 @@
+Summarize this reconstructed C function from the code only. The input may
+include a NAMING_MAP. Output Chinese JSON only. No markdown.
+
+Rules:
+- Distinguish confirmed behavior from possible behavior.
+- Mention security-relevant behavior only when visible in code.
+- Do not invent APIs, structs, callers, external context, or exploitability.
+- Keep the output compact but complete enough for firmware-level reporting.
+
+`function_name_suggestion` must be filled:
+- If the function signature already has a semantic name, use it exactly.
+- Otherwise infer a concise snake_case role name from the body.
+
+CRITICAL JSON SYNTAX:
+- Output must be parseable by `json.loads()`.
+- Use decimal numbers only. If mentioning a hex value, quote it as a string.
+- No trailing commas, comments, markdown fences, Python booleans, or `None`.
+
+JSON schema:
+{
+  "function_name_suggestion": "",
+  "summary": "",
+  "confirmed_behaviors": [],
+  "possible_behaviors": [],
+  "inputs": [{"name": "", "role": "", "evidence": "", "confidence": "low|medium|high"}],
+  "outputs": [],
+  "return_value": {"meaning": null, "success_values": [], "failure_values": [], "confidence": "low|medium|high"},
+  "side_effects": [],
+  "api_calls": [],
+  "function_calls": [],
+  "global_accesses": {"reads": [], "writes": []},
+  "important_constants": [],
+  "important_strings": [],
+  "error_handling": "",
+  "security_relevance": {"level": "none|low|medium|high", "reason": ""},
+  "confidence": "low|medium|high",
+  "uncertainties": []
+}
+
+Input:
+```c
+{{ named_code_with_map }}
+```

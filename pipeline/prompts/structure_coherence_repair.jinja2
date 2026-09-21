@@ -1,0 +1,77 @@
+You are repairing a structure-reconstruction result that failed local consistency checks.
+Typed `base->field` / `base.field` must exist on the declared struct type of `base`.
+{% if language_directive %}
+{{ language_directive }}
+{% endif %}
+
+Target: {{ binary_name }} {{ address }}
+
+Your previous structured output is NOT coherent with the layouts below. Fix it in ONE pass.
+
+Allowed fixes only (prefer the cheapest that restores coherence):
+1. Update <struct_updates> so every used field exists on the correct struct (offset-accurate).
+2. Demote failing typed accesses to bare offsets:
+   `*(T *)((char *)base + 0xNN)` with `/* +0xNN */`, matching the raw decompile.
+3. If unsure which struct owns an offset, ALWAYS choose (2). Do NOT invent fields to pass the check.
+4. If reported, restore an original array's inline storage and call arguments, or
+   fix unmatched delimiters using the raw control-flow grouping. Do not invent logic.
+5. You MUST clean every unambiguous null pointer cast (`(T *)0x0`, `(T *)0x00`,
+   `(T *)0`) to `NULL`. You may remove a straight-line cleanup label only when
+   the raw function and candidate show the same call, arguments, fall-through
+   behavior, and return. Otherwise preserve the label.
+
+Hard rules:
+- Preserve behavior, calls, side-effect order, and constants from the candidate.
+- Keep goto/LAB elimination and other successful cleanups when possible.
+- Do not use a text substitution to simplify code. Any cleanup must be justified
+  by the raw control-flow and data-flow shown in the inputs.
+- Do NOT rename FUN_/DAT_/LAB_ placeholders.
+- Do NOT invent APIs, includes, typedefs, or vulnerability comments.
+- Every `struct T *p` may only use fields of `T` after your fix.
+- Check object identity, byte offsets, access width and signedness against the raw
+  code. Typed pointer addition scales by element size; preserve that scale in all
+  remaining uses. Similar offsets alone do not establish a shared struct layout.
+- Before returning, verify that no pointer-valued null cast remains in the repaired
+  function. Numeric zeros used as integers, lengths, offsets, or sentinels must
+  remain numeric zeros.
+
+Coherence violations (must resolve all):
+{{ coherence_violations }}
+
+{% if known_structs %}
+Accepted registry definitions (reuse exact names; do not change existing field types or offsets):
+{{ known_structs }}
+{% endif %}
+{% if candidate_structs %}
+Candidate proposals (NOT accepted definitions; may conflict with the registry above):
+{{ candidate_structs }}
+Preserve accepted definitions. Amend a proposal only with compatible additional
+fields; otherwise retain the raw access for the conflicting portion of this function.
+{% endif %}
+{% if access_evidence %}
+Cross-function unresolved-access evidence:
+{{ access_evidence }}
+{% endif %}
+
+Candidate structured C (failed check):
+```c
+{{ candidate_structured }}
+```
+
+Raw Ghidra pseudo-C (ground truth for demoted offsets):
+```c
+{{ raw_decompile }}
+```
+{% if function_pcode %}
+P-Code context:
+These are raw decompiler lines around memory access and address calculation.
+Do not treat register/unique varnode names as source objects by themselves.
+{{ function_pcode }}
+{% endif %}
+
+Output format — exactly two top-level blocks, same as the structure pass:
+
+  1. <structured> ... </structured>
+  2. <struct_updates> ... </struct_updates>
+
+Put C code directly between tags (no markdown fences). Emit a full corrected function, not a diff.

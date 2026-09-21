@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.pyc
+
+# 虚拟环境
+.venv/
+.venv-*/
+
+# 项目机密配置 (含 API key)。提交 local_config.example.yaml 作模板。
+local_config.yaml
+
+# 运行产物
+output/
+
+# Ghidra / pyghidra-mcp 工作目录
+pyghidra_mcp_projects/
+*.gpr
+*.rep/
+
+# SQLite
+*.db
+*.db-journal
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+__MACOSX/
+__MACOSX
+
+# 临时备份
+legacy_*.json
+
+# 本地评测样本（不入库）
+samples/r9000_*
+samples/netgear_r9000/
+samples/*.bin
+samples/BR6208AC_binary/
+
+# 研究分析产物（本地实验，不入库）
+analysis/
+
+# 空目录占位
+reports/
+
+# benchmark 运行产物（可用 benchmark.tools.* 重新生成）
+benchmark/cases/*/pred/
+benchmark/cases/*/scores/
+benchmark/cases/*/alignment.json
+benchmark/cases/*/anchors.json
+benchmark/cases/*/propagation.json
+
+# --- local experiment / archive artifacts (do not commit) ---
+experiment_runs/
+experiments/
+archive/
+samples/BR6208AC_binary/
+.gitignore.bak
